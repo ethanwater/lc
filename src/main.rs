@@ -23,7 +23,7 @@ impl Visible for Path {
     }
 }
 
-const WIDTH: usize = 60;
+const WIDTH: usize = 50;
 
 fn ignore() -> Vec<String> {
     let contents = fs::read(".gitignore").unwrap();
@@ -75,29 +75,47 @@ where
 {
     let mut total_lines: u128 = 0;
     let path = directory_path.as_ref().as_os_str().to_str().unwrap();
-    if indent_amount.is_none() {
-        indent_amount = Some(2);
-    }
+    ternary!(indent_amount.is_none() => indent_amount = Some(2); indent_amount = indent_amount);
+
     let indent = " ".repeat(indent_amount.unwrap());
     let file_indent = " ".repeat(indent_amount.unwrap()+2);
-
     println!("{indent}{path}/");
 
-    for entry in fs::read_dir(directory_path)? {
-        let entry = entry?.path();
-        let path = entry.as_path();
-        let metadata = fs::metadata(path)?.file_type();
-        let mut target_total_lines: u128 = 0;
+    let entries = fs::read_dir(directory_path)
+        .expect("Failed to read directory")
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    let mut files = Vec::new();
+    let mut dirs = Vec::new();
 
+    for entry in entries {
+        if entry.is_file() {
+            files.push(entry);
+        } else {
+            dirs.push(entry);
+        }
+    }
+    files.sort();
+    dirs.sort();
+    let sorted_entries = files.iter().chain(dirs.iter());
+
+    for entry in sorted_entries {
+        let path = entry.as_path();
+        let metadata = fs::metadata(path)?;
+        let filetype = metadata.file_type();
+        //let bytesize = metadata.len();
+
+        let mut target_total_lines: u128 = 0;
         let file_entry = entry.file_name().unwrap().to_str().unwrap_or("?");
-        if metadata.is_file() && path.is_visible().is_some() {
+
+        if filetype.is_file() && path.is_visible().is_some() {
             let content = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
             for _ in content.lines() {
                 total_lines += 1;
                 target_total_lines += 1;
             }
-            println!("{file_indent}{}", format!("{:width$} {}", file_entry, target_total_lines, width=WIDTH));
-        } else if metadata.is_dir() && path.is_visible().is_some() {
+            println!("{file_indent}{}", format!("{:width$} {}", file_entry, target_total_lines,  width=WIDTH));
+        } else if filetype.is_dir() && path.is_visible().is_some() {
             let _linecount_result = linecount_verbose(Path::new(&path), Some(indent_amount.unwrap() + 2));
             let linecount = match _linecount_result {
                 Ok(success) => success,
