@@ -50,7 +50,7 @@ fn fetch_directory() -> std::io::Result<String> {
     return Ok(current_dir);
 }
 
-fn ignore(pathstr: &str) -> Vec<String> {
+fn detect_gitignore(pathstr: &str) -> Vec<String> {
     let mut path = pathstr.to_string();
     path.push_str("/.gitignore");
     let contents: Vec<u8> = fs::read(path).unwrap_or(Vec::new());
@@ -82,9 +82,7 @@ where
 
         if metadata.is_file() && path.is_visible().is_some() {
             let content = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
-            for _ in content.lines() {
-                total_lines += 1;
-            }
+            total_lines = content.lines().count() as u128;
         } else if metadata.is_dir() && path.is_visible().is_some() {
             let _linecount_result = linecount_abridged(Path::new(&path));
             let linecount = match _linecount_result {
@@ -100,7 +98,7 @@ where
 fn linecount_abridged_ignore(directory_path: &Path) -> std::io::Result<u128> {
     let mut total_lines: u128 = 0;
     let dir = directory_path.as_os_str().to_str().unwrap();
-    let gitignore = ignore(dir);
+    let gitignore = detect_gitignore(dir);
 
     for entry in fs::read_dir(directory_path)? {
         let entry = entry?.path();
@@ -133,20 +131,24 @@ fn linecount_verbose<P>(
 where
     P: AsRef<Path>,
 {
-    let mut total_lines: u128 = 0;
-    let path = directory_path.as_ref().as_os_str().to_str().unwrap();
-    ternary!(indent_amount.is_none() => indent_amount = Some(0); indent_amount = indent_amount);
+    let dir_path = directory_path
+        .as_ref()
+        .as_os_str()
+        .to_str()
+        .unwrap_or("???");
 
-    let indent = " ".repeat(indent_amount.unwrap());
-    let file_indent = " ".repeat(indent_amount.unwrap() + 2);
-    println!("{indent}{path}/");
+    ternary!(indent_amount.is_none() => indent_amount = Some(0); indent_amount = indent_amount);
+    let (dir_indent, file_indent) = (
+        " ".repeat(indent_amount.unwrap_or_default()),
+        " ".repeat(indent_amount.unwrap_or_default() + 2),
+    );
+    println!("{dir_indent}{dir_path}/");
 
     let entries = fs::read_dir(directory_path)
         .expect("Failed to read directory")
         .map(|entry| entry.unwrap().path())
         .collect::<Vec<_>>();
-    let mut files = Vec::new();
-    let mut dirs = Vec::new();
+    let (mut files, mut dirs) = (Vec::new(), Vec::new());
 
     for entry in entries {
         if entry.is_file() {
@@ -159,41 +161,29 @@ where
     dirs.sort();
     let sorted_entries = files.iter().chain(dirs.iter());
 
+    let mut total_linecount: u128 = 0;
     for entry in sorted_entries {
         let path = entry.as_path();
-        let metadata = fs::metadata(path)?;
-        let filetype = metadata.file_type();
-        //let bytesize = metadata.len();
+        let filetype = fs::metadata(path)?.file_type();
+        let filename = entry.file_name().unwrap().to_str().unwrap_or("?");
 
-        let mut target_total_lines: u128 = 0;
-        let file_entry = entry.file_name().unwrap().to_str().unwrap_or("?");
+        let mut file_linecount: u128 = 0;
 
         if filetype.is_file() && path.is_visible().is_some() {
             let content = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
-            for _ in content.lines() {
-                total_lines += 1;
-                target_total_lines += 1;
-            }
+            total_linecount += content.lines().count() as u128;
+            file_linecount += content.lines().count() as u128;
             println!(
                 "{file_indent}{}",
-                format!(
-                    "{:width$} {}",
-                    file_entry,
-                    target_total_lines,
-                    width = WIDTH
-                )
+                format!("{:width$} {}", filename, file_linecount, width = WIDTH)
             );
         } else if filetype.is_dir() && path.is_visible().is_some() {
-            let _linecount_result =
-                linecount_verbose(Path::new(&path), Some(indent_amount.unwrap() + 2));
-            let linecount = match _linecount_result {
-                Ok(success) => success,
-                Err(err) => panic!("shit!{err}"),
-            };
-            total_lines += linecount;
+            total_linecount +=
+                linecount_verbose(Path::new(&path), Some(indent_amount.unwrap() + 2))
+                    .expect("shit!");
         };
     }
-    Ok(total_lines)
+    Ok(total_linecount)
 }
 
 fn linecount_verbose_ignore(
@@ -202,7 +192,7 @@ fn linecount_verbose_ignore(
 ) -> std::io::Result<u128> {
     let mut total_lines: u128 = 0;
     let dir = directory_path.as_os_str().to_str().unwrap();
-    let gitignore = ignore(dir);
+    let gitignore = detect_gitignore(dir);
 
     ternary!(indent_amount.is_none() => indent_amount = Some(0); indent_amount = indent_amount);
 
