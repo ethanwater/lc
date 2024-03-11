@@ -1,8 +1,8 @@
-use std::time::Instant;
+use clap::{App, Arg};
 use std::io::BufRead;
 use std::path::Path;
+use std::time::Instant;
 use std::{fs, process};
-use clap::{App, Arg};
 
 macro_rules! ternary {
     ($test:expr => $true_expr:expr; $false_expr:expr) => {
@@ -33,13 +33,12 @@ impl Ignore for Path {
     fn ignore(&self, gitignore: Vec<String>) -> bool {
         for i in gitignore {
             if self.file_name().unwrap().to_str().unwrap() == i {
-                return true
+                return true;
             }
         }
         false
     }
 }
-
 
 const WIDTH: usize = 50;
 
@@ -98,10 +97,9 @@ where
     Ok(total_lines)
 }
 
-fn linecount_abridged_ignore(directory_path: &Path) -> std::io::Result<u128>
-{
+fn linecount_abridged_ignore(directory_path: &Path) -> std::io::Result<u128> {
     let mut total_lines: u128 = 0;
-    let dir = directory_path.as_os_str().to_str().unwrap(); 
+    let dir = directory_path.as_os_str().to_str().unwrap();
     let gitignore = ignore(dir);
 
     for entry in fs::read_dir(directory_path)? {
@@ -109,7 +107,7 @@ fn linecount_abridged_ignore(directory_path: &Path) -> std::io::Result<u128>
         let path = entry.as_path();
         let metadata = fs::metadata(path)?.file_type();
 
-        if path.ignore(gitignore.clone()){
+        if path.ignore(gitignore.clone()) {
             continue;
         } else if metadata.is_file() && path.is_visible().is_some() {
             let content = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
@@ -128,7 +126,10 @@ fn linecount_abridged_ignore(directory_path: &Path) -> std::io::Result<u128>
     Ok(total_lines)
 }
 
-fn linecount_verbose<P>(directory_path: P, mut indent_amount: Option<usize>) -> std::io::Result<u128>
+fn linecount_verbose<P>(
+    directory_path: P,
+    mut indent_amount: Option<usize>,
+) -> std::io::Result<u128>
 where
     P: AsRef<Path>,
 {
@@ -137,7 +138,7 @@ where
     ternary!(indent_amount.is_none() => indent_amount = Some(0); indent_amount = indent_amount);
 
     let indent = " ".repeat(indent_amount.unwrap());
-    let file_indent = " ".repeat(indent_amount.unwrap()+2);
+    let file_indent = " ".repeat(indent_amount.unwrap() + 2);
     println!("{indent}{path}/");
 
     let entries = fs::read_dir(directory_path)
@@ -173,9 +174,18 @@ where
                 total_lines += 1;
                 target_total_lines += 1;
             }
-            println!("{file_indent}{}", format!("{:width$} {}", file_entry, target_total_lines,  width=WIDTH));
+            println!(
+                "{file_indent}{}",
+                format!(
+                    "{:width$} {}",
+                    file_entry,
+                    target_total_lines,
+                    width = WIDTH
+                )
+            );
         } else if filetype.is_dir() && path.is_visible().is_some() {
-            let _linecount_result = linecount_verbose(Path::new(&path), Some(indent_amount.unwrap() + 2));
+            let _linecount_result =
+                linecount_verbose(Path::new(&path), Some(indent_amount.unwrap() + 2));
             let linecount = match _linecount_result {
                 Ok(success) => success,
                 Err(err) => panic!("shit!{err}"),
@@ -186,17 +196,18 @@ where
     Ok(total_lines)
 }
 
-fn linecount_verbose_ignore(directory_path: &Path, mut indent_amount: Option<usize>) -> std::io::Result<u128>
-{
-
+fn linecount_verbose_ignore(
+    directory_path: &Path,
+    mut indent_amount: Option<usize>,
+) -> std::io::Result<u128> {
     let mut total_lines: u128 = 0;
-    let dir = directory_path.as_os_str().to_str().unwrap(); 
+    let dir = directory_path.as_os_str().to_str().unwrap();
     let gitignore = ignore(dir);
 
     ternary!(indent_amount.is_none() => indent_amount = Some(0); indent_amount = indent_amount);
 
     let indent = " ".repeat(indent_amount.unwrap());
-    let file_indent = " ".repeat(indent_amount.unwrap()+2);
+    let file_indent = " ".repeat(indent_amount.unwrap() + 2);
     println!("{indent}{dir}/");
 
     let entries = fs::read_dir(directory_path)
@@ -225,17 +236,26 @@ fn linecount_verbose_ignore(directory_path: &Path, mut indent_amount: Option<usi
         let mut target_total_lines: u128 = 0;
         let file_entry = entry.file_name().unwrap().to_str().unwrap_or("?");
 
-    if path.ignore(gitignore.clone()){
-        continue;
-    } else if filetype.is_file() && path.is_visible().is_some() {
+        if path.ignore(gitignore.clone()) {
+            continue;
+        } else if filetype.is_file() && path.is_visible().is_some() {
             let content = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
             for _ in content.lines() {
                 total_lines += 1;
                 target_total_lines += 1;
             }
-            println!("{file_indent}{}", format!("{:width$} {}", file_entry, target_total_lines,  width=WIDTH));
+            println!(
+                "{file_indent}{}",
+                format!(
+                    "{:width$} {}",
+                    file_entry,
+                    target_total_lines,
+                    width = WIDTH
+                )
+            );
         } else if filetype.is_dir() && path.is_visible().is_some() {
-            let _linecount_result = linecount_verbose_ignore(Path::new(&path), Some(indent_amount.unwrap() + 2));
+            let _linecount_result =
+                linecount_verbose_ignore(Path::new(&path), Some(indent_amount.unwrap() + 2));
             let linecount = match _linecount_result {
                 Ok(success) => success,
                 Err(err) => panic!("shit!{err}"),
@@ -251,29 +271,24 @@ fn main() -> std::io::Result<()> {
         .version("1.0")
         .author("Ethan Water")
         .about("Line counting program")
-        .arg(
-            Arg::new("verbose").short('v').long("verbose"),
-        )
-        .arg(
-            Arg::new("ignore").short('i').long("ignore"),
-        )
+        .arg(Arg::new("verbose").short('v').long("verbose"))
+        .arg(Arg::new("ignore").short('i').long("ignore"))
         .get_matches();
 
-    
     if calls.is_present("verbose") && calls.is_present("ignore") {
         println!("[tree]");
         let start_execution = Instant::now();
         let result = linecount_verbose_ignore(Path::new(&fetch_directory().unwrap()), None)?;
         let end_execution = Instant::now();
         println!("\n[sum]   {result}");
-        println!("[execution]   {:?}", end_execution-start_execution);
+        println!("[execution]   {:?}", end_execution - start_execution);
     } else if calls.is_present("verbose") {
         println!("[tree]");
         let start_execution = Instant::now();
         let result = linecount_verbose(Path::new(&fetch_directory().unwrap()), None)?;
         let end_execution = Instant::now();
         println!("\n[sum]   {result}");
-        println!("[execution]   {:?}", end_execution-start_execution);
+        println!("[execution]   {:?}", end_execution - start_execution);
     } else if calls.is_present("ignore") {
         let result = linecount_abridged_ignore(Path::new(&fetch_directory().unwrap()))?;
         println!("{result}");
