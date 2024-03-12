@@ -3,6 +3,8 @@ use std::io::BufRead;
 use std::path::Path;
 use std::time::Instant;
 use std::{fs, process};
+use std::fs::File;
+use std::io::{self, BufReader, Read};
 
 macro_rules! ternary {
     ($test:expr => $true_expr:expr; $false_expr:expr) => {
@@ -251,6 +253,30 @@ where
     Ok(total_linecount)
 }
 
+fn linecount_accelerated(directory_path: &Path) -> std::io::Result<u128> {
+    let entries = fs::read_dir(directory_path)
+        .expect("Failed to read directory")
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+
+    let mut total_linecount: u128 = 0;
+    for entry in entries {
+        let path = entry.as_path();
+        let filetype = fs::metadata(path)?.file_type();
+
+        if filetype.is_file() && path.is_visible() {
+            dbg!(entry.file_name());
+            let file = File::open(entry.file_name().unwrap().to_str().unwrap_or("?")).unwrap();
+            let reader = BufReader::new(file).lines().count();
+            total_linecount += reader as u128;
+        } else if filetype.is_dir() && path.is_visible() {
+            total_linecount +=
+                linecount_accelerated(Path::new(&path)).expect("shit!");
+        };
+    }
+    Ok(total_linecount)
+}
+
 fn main() -> std::io::Result<()> {
     let calls = App::new("lc")
         .version("1.0")
@@ -258,6 +284,7 @@ fn main() -> std::io::Result<()> {
         .about("Line counting program")
         .arg(Arg::new("verbose").short('v').long("verbose"))
         .arg(Arg::new("ignore").short('i').long("ignore"))
+        .arg(Arg::new("prototype").short('p').long("ignore"))
         .get_matches();
 
     if calls.is_present("verbose") && calls.is_present("ignore") {
@@ -277,6 +304,12 @@ fn main() -> std::io::Result<()> {
     } else if calls.is_present("ignore") {
         let result = linecount_abridged_ignore(Path::new(&fetch_directory().unwrap()))?;
         println!("{result}");
+    } else if calls.is_present("prototype") {
+        let start_execution = Instant::now();
+        let result = linecount_accelerated(Path::new(&fetch_directory().unwrap()))?;
+        let end_execution = Instant::now();
+        println!("\n[sum]   {result}");
+        println!("[execution]   {:?}", end_execution - start_execution);
     } else {
         let result = linecount_abridged(Path::new(&fetch_directory().unwrap()))?;
         println!("{result}");
