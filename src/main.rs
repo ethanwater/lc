@@ -124,6 +124,7 @@ fn linecount_abridged_ignore(directory_path: &Path) -> std::io::Result<u128> {
     Ok(total_linecount)
 }
 
+//these functions should also return the bytes or something
 fn linecount_verbose<P>(
     directory_path: P,
     mut indent_amount: Option<usize>,
@@ -252,35 +253,72 @@ where
 }
 
 fn main() -> std::io::Result<()> {
-    let calls = App::new("lc")
-        .version("1.0")
-        .author("Ethan Water")
-        .about("Line counting program")
-        .arg(Arg::new("verbose").short('v').long("verbose"))
-        .arg(Arg::new("ignore").short('i').long("ignore"))
-        .get_matches();
+    //let calls = App::new("lc")
+    //    .version("1.0")
+    //    .author("Ethan Water")
+    //    .about("Line counting program")
+    //    .arg(Arg::new("verbose").short('v').long("verbose"))
+    //    .arg(Arg::new("ignore").short('i').long("ignore"))
+    //    .get_matches();
 
-    if calls.is_present("verbose") && calls.is_present("ignore") {
+    //if calls.is_present("verbose") && calls.is_present("ignore") {
+    //    println!("[tree]");
+    //    let start_execution = Instant::now();
+    //    let result = linecount_verbose_ignore(Path::new(&fetch_directory().unwrap()), None)?;
+    //    let end_execution = Instant::now();
+    //    println!("\n[sum]   {result}");
+    //    println!("[execution]   {:?}", end_execution - start_execution);
+    //} else if calls.is_present("verbose") {
+    //    println!("[tree]");
+    //    let start_execution = Instant::now();
+    //    let result = linecount_verbose(Path::new(&fetch_directory().unwrap()), None)?;
+    //    let end_execution = Instant::now();
+    //    println!("\n[sum]   {result}");
+    //    println!("[execution]   {:?}", end_execution - start_execution);
+    //} else if calls.is_present("ignore") {
+    //    let result = linecount_abridged_ignore(Path::new(&fetch_directory().unwrap()))?;
+    //    println!("{result}");
+    //} else {
+    //    let result = linecount_abridged(Path::new(&fetch_directory().unwrap()))?;
+    //    println!("{result}");
+    //}
+
+    Ok(())
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verbose() {
+        println!("[tree]");
+        let start_execution = Instant::now();
+        let result = linecount_verbose(Path::new(&fetch_directory().unwrap()), None).unwrap();
+        let end_execution = Instant::now();
+        println!("\n[sum]   {result}");
+        println!("[execution]   {:?}", end_execution - start_execution);
+    }
+    #[test]
+    fn verbose_ignore() -> std::io::Result<()> {
         println!("[tree]");
         let start_execution = Instant::now();
         let result = linecount_verbose_ignore(Path::new(&fetch_directory().unwrap()), None)?;
         let end_execution = Instant::now();
         println!("\n[sum]   {result}");
         println!("[execution]   {:?}", end_execution - start_execution);
-    } else if calls.is_present("verbose") {
-        println!("[tree]");
-        let start_execution = Instant::now();
-        let result = linecount_verbose(Path::new(&fetch_directory().unwrap()), None)?;
-        let end_execution = Instant::now();
-        println!("\n[sum]   {result}");
-        println!("[execution]   {:?}", end_execution - start_execution);
-    } else if calls.is_present("ignore") {
+        Ok(())
+    }
+    #[test]
+    fn abridged_ignore() -> std::io::Result<()> {
         let result = linecount_abridged_ignore(Path::new(&fetch_directory().unwrap()))?;
         println!("{result}");
-    } else {
+        Ok(())
+    }
+    #[test]
+    fn abridged() -> std::io::Result<()> {
         let result = linecount_abridged(Path::new(&fetch_directory().unwrap()))?;
         println!("{result}");
+        Ok(())
     }
-
-    Ok(())
 }
+
