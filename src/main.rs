@@ -1,4 +1,4 @@
-use clap::{App, Arg};
+use clap::{App, Arg, ArgAction};
 use std::io::Result;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -12,7 +12,8 @@ trait Visible {
 
 impl Visible for Path {
     fn is_visible(&self) -> bool {
-        if self.starts_with(".") {
+        //this may be a bit much. but it works well.
+        if self.file_name().unwrap().to_str().unwrap().chars().nth(0) == Some('.') {
             return false;
         }
         true
@@ -118,10 +119,12 @@ fn linecount_verbose(
     let (mut files, mut dirs) = (Vec::new(), Vec::new());
 
     for entry in entries {
-        if entry.is_file() {
-            files.push(entry);
-        } else {
-            dirs.push(entry);
+        if entry.is_visible() {
+            if entry.is_file() {
+                files.push(entry);
+            } else {
+                dirs.push(entry);
+            }
         }
     }
     files.sort();
@@ -184,44 +187,53 @@ fn linecount_verbose(
 
 fn main() -> std::io::Result<()> {
     let calls = App::new("lc")
-        .version("1.0")
+        .version("1.1")
         .author("Ethan Water")
-        .about("Line counting program")
+        .about("Line Counting Program")
+        .arg(
+            Arg::new("path")
+                .short('p')
+                .long("path")
+                .action(ArgAction::Set)
+                .value_name("PATH")
+                .help("Provides a path to lc"),
+        )
         .arg(Arg::new("verbose").short('v').long("verbose"))
         .arg(Arg::new("bytes").short('b').long("bytes"))
         .get_matches();
+    
+    let path = calls.get_one::<String>("path").map(PathBuf::from);
 
     if calls.is_present("verbose") && calls.is_present("bytes") {
         let start_time = Instant::now();
-        let result = linecount_verbose(None, true, None)?;
+        let result = linecount_verbose(path, true, None)?;
         let end_time = Instant::now();
         let (lines, bytes) = result;
         println!("[lines]       {lines}");
         println!("[bytes]       {bytes}");
-        println!("[time]   {:?}", end_time - start_time);
+        println!("[time]        {:?}", end_time - start_time);
     } else if calls.is_present("verbose") && !calls.is_present("bytes") {
         let start_time = Instant::now();
-        let result = linecount_verbose(None, false, None)?;
+        let result = linecount_verbose(path, false, None)?;
         let end_time = Instant::now();
         let (lines, _bytes) = result;
         println!("[lines]       {lines}");
-        println!("[time]   {:?}", end_time - start_time);
+        println!("[time]        {:?}", end_time - start_time);
     } else if calls.is_present("bytes") {
         let start_time = Instant::now();
-        let result = linecount(None, true)?;
+        let result = linecount(path, true)?;
         let end_time = Instant::now();
         let (lines, bytes) = result;
         println!("[lines]       {lines}");
         println!("[bytes]       {bytes}");
-        println!("[time]   {:?}", end_time - start_time);
+        println!("[time]        {:?}", end_time - start_time);
     } else {
         let start_time = Instant::now();
-        let result = linecount(None, false)?;
+        let result = linecount(path, false)?;
         let end_time = Instant::now();
         let (lines, _bytes) = result;
         println!("[lines]       {lines}");
-        println!("[time]   {:?}", end_time - start_time);
+        println!("[time]        {:?}", end_time - start_time);
     }
-
     Ok(())
 }
