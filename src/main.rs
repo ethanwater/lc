@@ -55,7 +55,7 @@ impl Visible for Path {
 //    Ok(list_to_ignore)
 //}
 
-fn linecount_abridged(dir: Option<PathBuf>, byte_toggle: bool) -> Result<(u128, u128)> {
+fn linecount(dir: Option<PathBuf>, byte_toggle: bool) -> Result<(u128, u128)> {
     let (mut total_lines, mut total_bytes) = (0, 0);
 
     let dir_path_binding = dir.unwrap_or(env::current_dir()?);
@@ -78,7 +78,7 @@ fn linecount_abridged(dir: Option<PathBuf>, byte_toggle: bool) -> Result<(u128, 
             }
 
             if metadata.is_dir() {
-                let _linecount_result = linecount_abridged(Some(entry), byte_toggle);
+                let _linecount_result = linecount(Some(entry), byte_toggle);
                 let linecount = match _linecount_result {
                     Ok(success) => success,
                     Err(err) => panic!("shit!{err}"),
@@ -208,7 +208,7 @@ fn main() -> std::io::Result<()> {
         println!("[time]   {:?}", end_time - start_time);
     } else if calls.is_present("bytes") {
         let start_time = Instant::now();
-        let result = linecount_abridged(None, true)?;
+        let result = linecount(None, true)?;
         let end_time = Instant::now();
         let (lines, bytes) = result;
         println!("[lines]       {lines}");
@@ -216,7 +216,7 @@ fn main() -> std::io::Result<()> {
         println!("[time]   {:?}", end_time - start_time);
     } else {
         let start_time = Instant::now();
-        let result = linecount_abridged(None, false)?;
+        let result = linecount(None, false)?;
         let end_time = Instant::now();
         let (lines, _bytes) = result;
         println!("[lines]       {lines}");
