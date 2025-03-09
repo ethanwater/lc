@@ -5,6 +5,15 @@ use std::time::Instant;
 use std::{env, fs};
 
 const WIDTH: usize = 50;
+const FILENAME_RENDER_LIMIT: usize = 60;
+
+enum ContentType {
+    CODE,       //LIGHT BLUE
+    MEDIA,      //IMAGE, AUDIO, VIDEO PURPLE
+    EXECUTABLE, //RED
+    NORMAL,
+    TEXT,
+}
 
 trait Visible {
     fn is_visible(&self) -> bool;
@@ -17,6 +26,131 @@ impl Visible for Path {
             return false;
         }
         true
+    }
+}
+
+trait Content {
+    fn content_type(&self) -> ContentType;
+}
+
+impl Content for Path {
+    fn content_type(&self) -> ContentType {
+        let code_extensions = vec![
+            // General programming languages
+            "c",
+            "h",
+            "cpp",
+            "hpp",
+            "cc",
+            "cxx",
+            "hh",
+            "hxx", // C/C++
+            "cs",
+            "java",
+            "class",
+            "jar",
+            "kt",
+            "kts", // C#, Java, Kotlin
+            "js",
+            "jsx",
+            "mjs",
+            "cjs",
+            "ts",
+            "tsx", // JavaScript, TypeScript
+            "py",
+            "pyc",
+            "pyd",
+            "pyo",
+            "rb",
+            "erb", // Python, Ruby
+            "php",
+            "phar",
+            "go",
+            "rs",
+            "rlib",
+            "swift",
+            "dart", // PHP, Go, Rust, Swift, Dart
+            "scala",
+            "lua",
+            "r",
+            "pl",
+            "pm",
+            "sql", // Scala, Lua, R, Perl, SQL
+            // Scripting & Shell
+            "sh",
+            "bash",
+            "zsh",
+            "bat",
+            "cmd", // Shell & Batch
+            "ps1",
+            "psm1",
+            "psd1", // PowerShell
+            // Web & Stylesheets
+            "html",
+            "htm",
+            "xhtml",
+            "xml",
+            "css",
+            "scss",
+            "sass",
+            // Config & Data
+            "json",
+            "yaml",
+            "yml",
+            "toml",
+            "env",
+            "ini",
+            "cfg",
+            // Documentation & Build
+            "md",
+            "rst",
+            "makefile",
+            "cmake",
+            "mk",
+            // DevOps & Version Control
+            "dockerfile",
+            "dockerignore",
+            "gitignore",
+            "gitattributes",
+        ];
+
+        let media_extensions = vec![
+            // Image extensions
+            "png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "webp", "svg", "ico", "heic", "avif",
+            // Audio extensions
+            "mp3", "wav", "flac", "aac", "ogg", "opus", "m4a", "wma", "aiff", "alac", "amr",
+            // Video extensions
+            "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpeg", "mpg", "3gp", "ogv",
+        ];
+
+        let executable_extensions = vec![
+            // Windows executables
+            "exe", "bat", "cmd", "msi", // Unix/Linux/macOS binary executables
+            "run", "out", "bin", "app", // Java executables
+            "jar",
+        ];
+
+        let text_extensions = vec![
+            // Plain text formats
+            "txt", "md", "rtf", "csv", "log", // Documentation formats (including PDF)
+            "pdf", "doc", "docx", "odt", "tex", "pages",
+        ];
+
+        if code_extensions.contains(&self.extension().unwrap_or_default().to_str().unwrap()) {
+            return ContentType::CODE;
+        } else if media_extensions.contains(&self.extension().unwrap_or_default().to_str().unwrap())
+        {
+            return ContentType::MEDIA;
+        } else if executable_extensions
+            .contains(&self.extension().unwrap_or_default().to_str().unwrap())
+        {
+            return ContentType::EXECUTABLE;
+        } else if text_extensions.contains(&self.extension().unwrap_or_default().to_str().unwrap())
+        {
+            return ContentType::TEXT;
+        } else {
+            return ContentType::NORMAL;
+        }
     }
 }
 
@@ -96,6 +230,8 @@ fn linecount(dir: Option<PathBuf>, byte_toggle: bool) -> Result<(u128, u128)> {
     Ok((total_lines, total_bytes))
 }
 
+use colored::Colorize;
+
 fn linecount_verbose(
     dir: Option<PathBuf>,
     byte_toggle: bool,
@@ -117,7 +253,13 @@ fn linecount_verbose(
         "─".repeat(2),
         " ".repeat(file_indent_from_zero_size),
     );
-    let dir_path_str = dir_path.file_name().unwrap().to_str().unwrap_or_default();
+    let dir_path_str = dir_path
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap_or_default()
+        .blue()
+        .bold();
 
     match indent_amount {
         Some(0) => println!("{dir_indent}{dir_path_str}/"),
@@ -147,7 +289,19 @@ fn linecount_verbose(
         let mut connector = "├";
         let path = entry.as_path();
         let filetype = fs::metadata(path)?.file_type();
-        let filename = entry.file_name().unwrap().to_str().unwrap_or("?");
+
+        let filename = entry
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap_or("?")
+            .to_string();
+
+        let filename = if filename.len() > FILENAME_RENDER_LIMIT {
+            format!("{}...", &filename[..FILENAME_RENDER_LIMIT])
+        } else {
+            filename
+        };
 
         if path.is_visible() {
             if filetype.is_file() {
@@ -173,7 +327,15 @@ fn linecount_verbose(
                 let formatted_output = match byte_toggle {
                     true => format!(
                         "{:width$} ({}L, {}B)",
-                        filename,
+                        {
+                            match path.content_type() {
+                                ContentType::MEDIA => filename.magenta().to_string(),
+                                ContentType::CODE => filename.cyan().to_string(),
+                                ContentType::EXECUTABLE => filename.green().to_string(),
+                                ContentType::TEXT => filename.yellow().to_string(),
+                                _ => filename.to_string(),
+                            }
+                        },
                         file_linecount,
                         file_bytes,
                         width = WIDTH
