@@ -117,7 +117,7 @@ fn linecount_verbose(
         "─".repeat(2),
         " ".repeat(file_indent_from_zero_size),
     );
-    let dir_path_str = dir_path.to_str().unwrap_or_default();
+    let dir_path_str = dir_path.file_name().unwrap().to_str().unwrap_or_default();
 
     match indent_amount {
         Some(0) => println!("{dir_indent}{dir_path_str}/"),
