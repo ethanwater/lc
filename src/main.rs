@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use std::{env, fs};
 
-const WIDTH: usize = 50;
+const WIDTH: usize = 20;
 const FILENAME_RENDER_LIMIT: usize = 60;
 
 enum ContentType {
@@ -223,6 +223,7 @@ fn linecount(dir: Option<PathBuf>, byte_toggle: bool) -> Result<(u128, u128)> {
                     }
                 };
                 total_lines += linecount.0;
+                total_bytes += linecount.1;
                 continue;
             };
         }
@@ -368,6 +369,18 @@ fn linecount_verbose(
     Ok((total_lines, total_bytes))
 }
 
+fn format_byte_count(byte_count: u128) -> String {
+    if byte_count / 1_000_000_000 > 1 {
+        return format!("{} GB", byte_count as f64 / 1_000_000_000.);
+    } else if byte_count / 1_000_000 > 1 {
+        return format!("{} MB", byte_count as f64 / 1_000_000.);
+    } else if byte_count / 1_000 > 1 {
+        return format!("{} KB", byte_count as f64 / 1_000.);
+    } else {
+        return format!("{} B", byte_count);
+    }
+}
+
 fn main() -> std::io::Result<()> {
     let calls = App::new("lc")
         .version("1.1")
@@ -392,8 +405,9 @@ fn main() -> std::io::Result<()> {
         let result = linecount_verbose(path, true, None)?;
         let end_time = Instant::now();
         let (lines, bytes) = result;
+        let f_bytes = format_byte_count(bytes);
         println!(
-            "[lines]       {lines}\n[bytes]       {bytes}\n[time]        {:?}",
+            "[lines]       {lines}\n[bytes]       {f_bytes}\n[time]        {:?}",
             end_time - start_time
         );
     } else if calls.is_present("verbose") && !calls.is_present("bytes") {
@@ -410,8 +424,9 @@ fn main() -> std::io::Result<()> {
         let result = linecount(path, true)?;
         let end_time = Instant::now();
         let (lines, bytes) = result;
+        let f_bytes = format_byte_count(bytes);
         println!(
-            "[lines]       {lines}\n[bytes]       {bytes}\n[time]        {:?}",
+            "[lines]       {lines}L\n[bytes]       {f_bytes}\n[time]        {:?}",
             end_time - start_time
         );
     } else {
