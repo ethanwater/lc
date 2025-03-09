@@ -113,13 +113,16 @@ fn linecount_verbose(
     }
 
     let (dir_indent, file_indent_from_dir, file_ident_from_zero) = (
-        " ".repeat(indent_amount.unwrap_or_default()),
+        "─".repeat(indent_amount.unwrap_or_default()),
         "─".repeat(2),
         " ".repeat(file_indent_from_zero_size),
     );
     let dir_path_str = dir_path.file_name().unwrap().to_str().unwrap_or_default();
 
-    println!("{dir_indent}{dir_path_str}/");
+    match indent_amount {
+        Some(0) => println!("{dir_indent}{dir_path_str}/"),
+        _ => println!("├{dir_indent}{dir_path_str}/"),
+    }
 
     let entries = fs::read_dir(dir_path)
         .expect("Failed to read directory")
@@ -162,8 +165,11 @@ fn linecount_verbose(
                     connector = "└";
                 }
 
-                let formatted_indent =
-                    format!("{dir_indent}{file_ident_from_zero}{connector}{file_indent_from_dir}");
+                let formatted_indent = match indent_amount {
+                    Some(0) => format!("{file_ident_from_zero}{connector}{file_indent_from_dir}"),
+                    _ => format!("|{file_ident_from_zero}{connector}{file_indent_from_dir}"),
+                };
+
                 let formatted_output = match byte_toggle {
                     true => format!(
                         "{:width$} ({}L, {}B)",
