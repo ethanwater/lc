@@ -79,10 +79,14 @@ fn linecount(dir: Option<PathBuf>, byte_toggle: bool) -> Result<(u128, u128)> {
             }
 
             if metadata.is_dir() {
-                let _linecount_result = linecount(Some(entry), byte_toggle);
+                let clone_entry = entry.clone();
+                let _linecount_result = linecount(Some(entry).clone(), byte_toggle);
                 let linecount = match _linecount_result {
                     Ok(success) => success,
-                    Err(err) => panic!("shit!{err}"),
+                    Err(err) => {
+                        eprintln!("{err}: skipping {:?}", Some(clone_entry));
+                        continue;
+                    }
                 };
                 total_lines += linecount.0;
                 continue;
@@ -100,17 +104,25 @@ fn linecount_verbose(
     let (mut total_lines, mut total_bytes) = (0, 0);
     let dir_path_binding = dir.unwrap_or(env::current_dir()?);
     let dir_path = dir_path_binding.as_path();
+    let mut file_indent_from_zero_size = indent_amount.unwrap_or_default();
 
     if indent_amount.is_none() {
         indent_amount = Some(0);
+    } else if indent_amount.unwrap() > 0 {
+        file_indent_from_zero_size += 1;
     }
-    let (dir_indent, file_indent) = (
-        " ".repeat(indent_amount.unwrap_or_default()),
-        " ".repeat(indent_amount.unwrap_or_default() + 2),
-    );
 
+    let (dir_indent, file_indent_from_dir, file_ident_from_zero) = (
+        "─".repeat(indent_amount.unwrap_or_default()),
+        "─".repeat(2),
+        " ".repeat(file_indent_from_zero_size),
+    );
     let dir_path_str = dir_path.to_str().unwrap_or_default();
-    println!("{dir_indent}{dir_path_str}/");
+
+    match indent_amount {
+        Some(0) => println!("{dir_indent}{dir_path_str}/"),
+        _ => println!("├{dir_indent}{dir_path_str}/"),
+    }
 
     let entries = fs::read_dir(dir_path)
         .expect("Failed to read directory")
@@ -131,7 +143,8 @@ fn linecount_verbose(
     dirs.sort();
     let sorted_entries = files.iter().chain(dirs.iter());
 
-    for entry in sorted_entries {
+    for (idx, entry) in sorted_entries.enumerate() {
+        let mut connector = "├";
         let path = entry.as_path();
         let filetype = fs::metadata(path)?.file_type();
         let filename = entry.file_name().unwrap().to_str().unwrap_or("?");
@@ -148,24 +161,32 @@ fn linecount_verbose(
                     total_bytes += file_bytes;
                 }
 
-                println!(
-                    "{file_indent}{}",
-                    match byte_toggle {
-                        true => format!(
-                            "{:width$} (lines: {}, bytes: {})",
-                            filename,
-                            file_linecount,
-                            file_bytes,
-                            width = WIDTH
-                        ),
-                        false => format!(
-                            "{:width$} (lines: {})",
-                            filename,
-                            file_linecount,
-                            width = WIDTH
-                        ),
-                    }
-                );
+                if idx == files.len() - 1 {
+                    connector = "└";
+                }
+
+                let formatted_indent = match indent_amount {
+                    Some(0) => format!("{file_ident_from_zero}{connector}{file_indent_from_dir}"),
+                    _ => format!("|{file_ident_from_zero}{connector}{file_indent_from_dir}"),
+                };
+
+                let formatted_output = match byte_toggle {
+                    true => format!(
+                        "{:width$} ({}L, {}B)",
+                        filename,
+                        file_linecount,
+                        file_bytes,
+                        width = WIDTH
+                    ),
+                    false => format!(
+                        "{:width$} (lines: {})",
+                        filename,
+                        file_linecount,
+                        width = WIDTH
+                    ),
+                };
+
+                println!("{formatted_indent}{formatted_output}");
             } else if filetype.is_dir() {
                 let recursive_lc = linecount_verbose(
                     Some(PathBuf::from(&path)),
@@ -201,7 +222,7 @@ fn main() -> std::io::Result<()> {
         .arg(Arg::new("verbose").short('v').long("verbose"))
         .arg(Arg::new("bytes").short('b').long("bytes"))
         .get_matches();
-    
+
     let path = calls.get_one::<String>("path").map(PathBuf::from);
 
     if calls.is_present("verbose") && calls.is_present("bytes") {
@@ -209,31 +230,37 @@ fn main() -> std::io::Result<()> {
         let result = linecount_verbose(path, true, None)?;
         let end_time = Instant::now();
         let (lines, bytes) = result;
-        println!("[lines]       {lines}");
-        println!("[bytes]       {bytes}");
-        println!("[time]        {:?}", end_time - start_time);
+        println!(
+            "[lines]       {lines}\n[bytes]       {bytes}\n[time]        {:?}",
+            end_time - start_time
+        );
     } else if calls.is_present("verbose") && !calls.is_present("bytes") {
         let start_time = Instant::now();
         let result = linecount_verbose(path, false, None)?;
         let end_time = Instant::now();
         let (lines, _bytes) = result;
-        println!("[lines]       {lines}");
-        println!("[time]        {:?}", end_time - start_time);
+        println!(
+            "[lines]       {lines}\n[time]        {:?}",
+            end_time - start_time
+        );
     } else if calls.is_present("bytes") {
         let start_time = Instant::now();
         let result = linecount(path, true)?;
         let end_time = Instant::now();
         let (lines, bytes) = result;
-        println!("[lines]       {lines}");
-        println!("[bytes]       {bytes}");
-        println!("[time]        {:?}", end_time - start_time);
+        println!(
+            "[lines]       {lines}\n[bytes]       {bytes}\n[time]        {:?}",
+            end_time - start_time
+        );
     } else {
         let start_time = Instant::now();
         let result = linecount(path, false)?;
         let end_time = Instant::now();
         let (lines, _bytes) = result;
-        println!("[lines]       {lines}");
-        println!("[time]        {:?}", end_time - start_time);
+        println!(
+            "[lines]       {lines}\n[time]        {:?}",
+            end_time - start_time
+        );
     }
     Ok(())
 }
