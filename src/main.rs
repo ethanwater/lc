@@ -14,6 +14,7 @@ enum ContentType {
     NORMAL,
     TEXT,
     LICENSE,
+    MAKEFILE,
 }
 
 trait Visible {
@@ -27,6 +28,19 @@ impl Visible for Path {
             return false;
         }
         true
+    }
+}
+
+use std::os::unix::fs::PermissionsExt;
+trait UnixExecutable {
+    fn is_unix_executable(&self) -> Result<bool>;
+}
+
+impl UnixExecutable for Path {
+    fn is_unix_executable(&self) -> Result<bool> {
+        let metadata = self.metadata()?;
+
+        Ok(metadata.permissions().mode() & 0o111 != 0)
     }
 }
 
@@ -77,15 +91,6 @@ impl Content for Path {
             "pl",
             "pm",
             "sql", // Scala, Lua, R, Perl, SQL
-            // Scripting & Shell
-            "sh",
-            "bash",
-            "zsh",
-            "bat",
-            "cmd", // Shell & Batch
-            "ps1",
-            "psm1",
-            "psd1", // PowerShell
             // Web & Stylesheets
             "html",
             "htm",
@@ -105,7 +110,6 @@ impl Content for Path {
             // Documentation & Build
             "md",
             "rst",
-            "makefile",
             "cmake",
             "mk",
             // DevOps & Version Control
@@ -128,7 +132,8 @@ impl Content for Path {
             // Windows executables
             "exe", "bat", "cmd", "msi", // Unix/Linux/macOS binary executables
             "run", "out", "bin", "app", // Java executables
-            "jar",
+            "jar", "sh", "bash", "zsh", // Scripts
+            "ps1", "psm1", "psd1",      // PowerShell (Windows)
         ];
 
         let text_extensions = vec![
@@ -139,61 +144,43 @@ impl Content for Path {
 
         if code_extensions.contains(&self.extension().unwrap_or_default().to_str().unwrap()) {
             return ContentType::CODE;
-        } else if media_extensions.contains(&self.extension().unwrap_or_default().to_str().unwrap())
-        {
+        } else if media_extensions.contains(&self.extension().unwrap_or_default().to_str().unwrap()) {
             return ContentType::MEDIA;
-        } else if executable_extensions
-            .contains(&self.extension().unwrap_or_default().to_str().unwrap())
-        {
+        } else if executable_extensions.contains(&self.extension().unwrap_or_default().to_str().unwrap()) || self.is_unix_executable().unwrap() && !text_extensions.contains(&self.extension().unwrap_or_default().to_str().unwrap()) {
             return ContentType::EXECUTABLE;
-        } else if text_extensions.contains(&self.extension().unwrap_or_default().to_str().unwrap())
-        {
+        } else if text_extensions.contains(&self.extension().unwrap_or_default().to_str().unwrap()) {
             return ContentType::TEXT;
         } else if self.file_name().unwrap() == "LICENSE" {
             return ContentType::LICENSE;
+        } else if self.file_name().unwrap() == "Makefile" {
+            return ContentType::MAKEFILE;
         } else {
             return ContentType::NORMAL;
         }
     }
 }
 
-//trait Ignore {
-//    fn ignore(&self, gitignore: &Vec<String>) -> bool;
-//}
-//
-//impl Ignore for Path {
-//    fn ignore(&self, gitignore: &Vec<String>) -> bool {
-//        for i in gitignore {
-//            if self.file_name().unwrap().to_str().unwrap() == i {
-//                return true;
-//            }
-//        }
-//        false
-//    }
-//}
-//
-//
-//fn detect_gitignore(path: &Path) -> Result<Vec<String>> {
-//    let gitignore = path.join(".gitignore");
-//    if !gitignore.exists() {
-//        return Err(Error::new(ErrorKind::Other, ".gitignore not found"));
-//    }
-//
-//    let contents: Vec<u8> = fs::read(gitignore).unwrap_or(Vec::new());
-//    let mut list_to_ignore: Vec<String> = Vec::new();
-//
-//    for line in contents.lines() {
-//        let mut value = line.unwrap_or_default();
-//        if value.starts_with("/") {
-//            value.remove(0);
-//        }
-//        list_to_ignore.push(value);
-//    }
-//
-//    Ok(list_to_ignore)
-//}
+fn fetch_gitignore(path: &Path) -> Result<Vec<String>> {
+    let gitignore = path.join(".gitignore");
+    if !gitignore.exists() {
+        return Ok(Vec::new());
+    }
 
-fn linecount(dir: Option<PathBuf>, byte_toggle: bool) -> Result<(u128, u128)> {
+    let contents = fs::read_to_string(gitignore)?;
+    let mut list_to_ignore: Vec<String> = Vec::new();
+
+    for line in contents.lines() {
+        let mut value = line.to_string();
+        if value.starts_with("/") {
+            value.remove(0);
+        }
+        list_to_ignore.push(value);
+    }
+
+    Ok(list_to_ignore)
+}
+
+fn linecount(dir: Option<PathBuf>, byte_toggle: bool, ignore_toggle: bool) -> Result<(u128, u128)> {
     let (mut total_lines, mut total_bytes) = (0, 0);
 
     let dir_path_binding = dir.unwrap_or(env::current_dir()?);
@@ -204,7 +191,6 @@ fn linecount(dir: Option<PathBuf>, byte_toggle: bool) -> Result<(u128, u128)> {
         let entry = entry?.path();
         let path = entry.as_path();
 
-        if path.is_visible() {
             let metadata = fs::metadata(path)?.file_type();
             if metadata.is_file() {
                 let content = String::from_utf8_lossy(&fs::read(&entry)?).into_owned();
@@ -217,7 +203,7 @@ fn linecount(dir: Option<PathBuf>, byte_toggle: bool) -> Result<(u128, u128)> {
 
             if metadata.is_dir() {
                 let clone_entry = entry.clone();
-                let _linecount_result = linecount(Some(entry).clone(), byte_toggle);
+                let _linecount_result = linecount(Some(entry).clone(), byte_toggle, ignore_toggle);
                 let linecount = match _linecount_result {
                     Ok(success) => success,
                     Err(err) => {
@@ -229,7 +215,6 @@ fn linecount(dir: Option<PathBuf>, byte_toggle: bool) -> Result<(u128, u128)> {
                 total_bytes += linecount.1;
                 continue;
             };
-        }
     }
     Ok((total_lines, total_bytes))
 }
@@ -239,12 +224,14 @@ use colored::Colorize;
 fn linecount_verbose(
     dir: Option<PathBuf>,
     byte_toggle: bool,
+    ignore_toggle: bool,
     mut indent_amount: Option<usize>,
 ) -> Result<(u128, u128)> {
     let (mut total_lines, mut total_bytes) = (0, 0);
     let dir_path_binding = dir.unwrap_or(env::current_dir()?);
     let dir_path = dir_path_binding.as_path();
     let mut file_indent_from_zero_size = indent_amount.unwrap_or_default();
+    let ignore_vec = fetch_gitignore(&dir_path)?;
 
     if indent_amount.is_none() {
         indent_amount = Some(0);
@@ -277,12 +264,16 @@ fn linecount_verbose(
     let (mut files, mut dirs) = (Vec::new(), Vec::new());
 
     for entry in entries {
-        if entry.is_visible() {
-            if entry.is_file() {
-                files.push(entry);
-            } else {
-                dirs.push(entry);
-            }
+        //if ignore_toggle {
+        //    if ignore_vec.contains(&entry.file_name().unwrap().to_string_lossy().to_string()) {
+        //        continue;
+        //    }
+        //}
+
+        if entry.is_file() {
+            files.push(entry);
+        } else {
+            dirs.push(entry);
         }
     }
     files.sort();
@@ -294,31 +285,30 @@ fn linecount_verbose(
         let path = entry.as_path();
         let filetype = fs::metadata(path)?.file_type();
 
-        let filename = entry
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap_or("?")
-            .to_string();
+        if filetype.is_file() {
+            let content = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
+            let file_linecount = content.lines().count() as u128;
+            let mut file_bytes: u128 = 0;
 
-        let filename = if filename.len() > FILENAME_RENDER_LIMIT {
-            format!("{}...", &filename[..FILENAME_RENDER_LIMIT])
-        } else {
-            filename
-        };
+            total_lines += file_linecount;
+            if byte_toggle {
+                file_bytes = content.as_bytes().len() as u128;
+                total_bytes += file_bytes;
+            }
 
-        if path.is_visible() {
-            if filetype.is_file() {
-                let content = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
-                let file_linecount = content.lines().count() as u128;
-                total_lines += file_linecount;
+            if entry.is_visible() && !ignore_vec.contains(&entry.file_name().unwrap().to_string_lossy().to_string()) {
+                let filename = entry
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap_or("?")
+                .to_string();
 
-                let mut file_bytes: u128 = 0;
-                if byte_toggle {
-                    file_bytes = content.as_bytes().len() as u128;
-                    total_bytes += file_bytes;
-                }
-
+                let filename = if filename.len() > FILENAME_RENDER_LIMIT {
+                    format!("{}...", &filename[..FILENAME_RENDER_LIMIT])
+                } else {
+                    filename
+                };
                 if idx == files.len() - 1 {
                     connector = "└";
                 }
@@ -333,11 +323,12 @@ fn linecount_verbose(
                         "{:width$} ({}L, {}B)",
                         {
                             match path.content_type() {
-                                ContentType::MEDIA => filename.magenta().to_string(),
+                                ContentType::MEDIA => filename.bright_magenta().to_string(),
                                 ContentType::CODE => filename.cyan().to_string(),
                                 ContentType::EXECUTABLE => filename.green().to_string(),
-                                ContentType::TEXT => filename.yellow().to_string(),
-                                ContentType::LICENSE => filename.red().to_string(),
+                                ContentType::TEXT => filename.truecolor(217, 50, 122).to_string(),
+                                ContentType::LICENSE => filename.truecolor(0,0,255).to_string(),
+                                ContentType::MAKEFILE => filename.red().to_string(),
                                 _ => filename.to_string(),
                             }
                         },
@@ -352,23 +343,23 @@ fn linecount_verbose(
                         width = WIDTH
                     ),
                 };
-
                 println!("{formatted_indent}{formatted_output}");
-            } else if filetype.is_dir() {
-                let recursive_lc = linecount_verbose(
-                    Some(PathBuf::from(&path)),
-                    byte_toggle,
-                    Some(indent_amount.unwrap() + 2),
-                );
-                if recursive_lc.is_err() {
-                    continue;
-                }
-                total_lines += recursive_lc.as_ref().unwrap().0;
-                if byte_toggle {
-                    total_bytes += recursive_lc.as_ref().unwrap().1;
-                }
-            };
-        }
+            }
+        } else if filetype.is_dir() {
+            let recursive_lc = linecount_verbose(
+                Some(PathBuf::from(&path)),
+                byte_toggle,
+                ignore_toggle,
+                Some(indent_amount.unwrap() + 2),
+            );
+            if recursive_lc.is_err() {
+                continue;
+            }
+            total_lines += recursive_lc.as_ref().unwrap().0;
+            if byte_toggle {
+                total_bytes += recursive_lc.as_ref().unwrap().1;
+            }
+        };
     }
     Ok((total_lines, total_bytes))
 }
@@ -406,7 +397,7 @@ fn main() -> std::io::Result<()> {
 
     if calls.is_present("verbose") && calls.is_present("bytes") {
         let start_time = Instant::now();
-        let result = linecount_verbose(path, true, None)?;
+        let result = linecount_verbose(path, true, true, None)?;
         let end_time = Instant::now();
         let (lines, bytes) = result;
         let f_bytes = format_byte_count(bytes);
@@ -416,7 +407,7 @@ fn main() -> std::io::Result<()> {
         );
     } else if calls.is_present("verbose") && !calls.is_present("bytes") {
         let start_time = Instant::now();
-        let result = linecount_verbose(path, false, None)?;
+        let result = linecount_verbose(path, false, true, None)?;
         let end_time = Instant::now();
         let (lines, _bytes) = result;
         println!(
@@ -425,7 +416,7 @@ fn main() -> std::io::Result<()> {
         );
     } else if calls.is_present("bytes") {
         let start_time = Instant::now();
-        let result = linecount(path, true)?;
+        let result = linecount(path, true, true)?;
         let end_time = Instant::now();
         let (lines, bytes) = result;
         let f_bytes = format_byte_count(bytes);
@@ -435,7 +426,7 @@ fn main() -> std::io::Result<()> {
         );
     } else {
         let start_time = Instant::now();
-        let result = linecount(path, false)?;
+        let result = linecount(path, false, true)?;
         let end_time = Instant::now();
         let (lines, _bytes) = result;
         println!(
