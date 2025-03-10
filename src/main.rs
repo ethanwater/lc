@@ -13,6 +13,7 @@ enum ContentType {
     EXECUTABLE, //RED
     NORMAL,
     TEXT,
+    LICENSE,
 }
 
 trait Visible {
@@ -148,6 +149,8 @@ impl Content for Path {
         } else if text_extensions.contains(&self.extension().unwrap_or_default().to_str().unwrap())
         {
             return ContentType::TEXT;
+        } else if self.file_name().unwrap() == "LICENSE" {
+            return ContentType::LICENSE;
         } else {
             return ContentType::NORMAL;
         }
@@ -334,6 +337,7 @@ fn linecount_verbose(
                                 ContentType::CODE => filename.cyan().to_string(),
                                 ContentType::EXECUTABLE => filename.green().to_string(),
                                 ContentType::TEXT => filename.yellow().to_string(),
+                                ContentType::LICENSE => filename.red().to_string(),
                                 _ => filename.to_string(),
                             }
                         },
