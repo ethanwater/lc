@@ -125,44 +125,6 @@ fn fetch_gitignore(path: &Path) -> Result<Vec<String>> {
     Ok(list_to_ignore)
 }
 
-//Non-asynchronous Linecount func, single-threaded. Only here incase I decide to reimplement it.
-fn linecount(dir: Option<PathBuf>) -> Result<(u128, u128)> {
-    let (mut total_lines, mut total_bytes) = (0, 0);
-
-    let dir_path_binding = dir.unwrap_or(env::current_dir()?);
-    let dir_path = dir_path_binding.as_path();
-
-    let directory_entries = fs::read_dir(dir_path)?;
-    for entry in directory_entries {
-        let entry = entry?.path();
-        let path = entry.as_path();
-
-        let metadata = fs::metadata(path)?.file_type();
-        if metadata.is_file() {
-            let content = String::from_utf8_lossy(&fs::read(&entry)?).into_owned();
-            total_lines += content.lines().count() as u128;
-            total_bytes += content.as_bytes().len() as u128;
-            continue;
-        }
-
-        if metadata.is_dir() {
-            let clone_entry = entry.clone();
-            let _linecount_result = linecount(Some(entry).clone());
-            let linecount = match _linecount_result {
-                Ok(success) => success,
-                Err(err) => {
-                    eprintln!("{err}: skipping {:?}", Some(clone_entry));
-                    continue;
-                }
-            };
-            total_lines += linecount.0;
-            total_bytes += linecount.1;
-            continue;
-        };
-    }
-    Ok((total_lines, total_bytes))
-}
-
 fn linecount_async(dir: Option<PathBuf>) -> Result<(u128, u128)> {
     let total_lines = Arc::new(Mutex::new(0));
     let total_bytes = Arc::new(Mutex::new(0));
@@ -181,9 +143,13 @@ fn linecount_async(dir: Option<PathBuf>) -> Result<(u128, u128)> {
         let filetype = fs::metadata(path)?.file_type();
 
         if filetype.is_file() {
-            let content = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
-            let file_linecount = content.lines().count() as u128;
-            let file_bytes = content.as_bytes().len() as u128;
+            let content = fs::read(&path)?; // Read the raw bytes
+            let content_len = content.len() as u128;
+            let content_str = std::str::from_utf8(&content).unwrap_or("");
+
+            //let content = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
+            let file_linecount = content_str.lines().count() as u128;
+            let file_bytes = content_len;
 
             *total_lines.lock().unwrap() += file_linecount;
             *total_bytes.lock().unwrap() += file_bytes;
@@ -294,13 +260,15 @@ fn linecount_display(
             } else {
                 filename
             };
+
+            //if last file in head/sub-directory
             if idx == files.len() - 1 {
                 connector = "└";
             }
-
-            let formatted_indent = match indent_amount {
+            
+            let formatted_indent: String = match indent_amount {
                 Some(0) => format!("{file_ident_from_zero}{connector}{file_indent_from_dir}"),
-                _ => format!("│{file_ident_from_zero}{connector}{file_indent_from_dir}"),
+                _ => format!("|{file_ident_from_zero}{connector}{file_indent_from_dir}"),
             };
 
             let formatted_output = format!(
@@ -339,7 +307,7 @@ fn linecount_display(
 //          because of this the output looks scattered and disorganized.
 //
 //
-fn linecount_visual_async(
+fn linecount_display_async(
     dir: Option<PathBuf>,
     mut indent_amount: Option<usize>,
 ) -> Result<(u128, u128)> {
@@ -457,7 +425,7 @@ fn linecount_visual_async(
                 let path = PathBuf::from(path);
 
                 thread::spawn(move || {
-                    let recursive_lc = linecount_visual_async(
+                    let recursive_lc = linecount_display_async(
                         Some(path),
                         Some(indent_amount.unwrap() + 2),
                     );
@@ -543,4 +511,37 @@ fn main() -> std::io::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::linecount_async;
+    use std::time::Instant;
+
+    const TEST_ITERATIONS: u128 = 1000;
+
+    #[test]
+    fn get_average_execution_time() {
+        let mut total_execution_time: f64 = 0.;
+        let mut iteration = 0;
+        let mut t_bytes = 0;
+
+        while iteration < TEST_ITERATIONS {
+            let start_time = Instant::now();
+            let (_lines, bytes) = linecount_async(None).unwrap();
+            let end_time = Instant::now();
+
+            t_bytes += bytes;
+            total_execution_time += (end_time - start_time).as_secs_f64();
+            iteration += 1;
+        }
+
+        let avg_bytes = t_bytes/TEST_ITERATIONS;
+        let avg_execution_time = total_execution_time/TEST_ITERATIONS as f64;
+        let mbs = avg_bytes as f64 / (avg_execution_time * 1_048_576.);
+
+        println!("Average MB/S:                         {:.7}mb/s", mbs);
+        println!("Average Execution Time Per Iteration: {}", avg_execution_time);
+        println!("Total Execution Time:                 {}", total_execution_time);
+    }
 }
