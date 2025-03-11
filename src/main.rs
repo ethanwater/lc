@@ -5,7 +5,6 @@ use std::time::Instant;
 use std::{env, fs};
 use colored::Colorize;
 use std::os::unix::fs::PermissionsExt;
-use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -191,96 +190,107 @@ fn fetch_gitignore(path: &Path) -> Result<Vec<String>> {
     Ok(list_to_ignore)
 }
 
-fn linecount(
+//Default Linecount func, single-threaded. Only here incase I decide to reimplement it.
+//
+// fn linecount(dir: Option<PathBuf>, byte_toggle: bool, ignore_toggle: bool) -> Result<(u128, u128)> {
+//     let (mut total_lines, mut total_bytes) = (0, 0);
+// 
+//     let dir_path_binding = dir.unwrap_or(env::current_dir()?);
+//     let dir_path = dir_path_binding.as_path();
+// 
+//     let directory_entries = fs::read_dir(dir_path)?;
+//     for entry in directory_entries {
+//         let entry = entry?.path();
+//         let path = entry.as_path();
+// 
+//             let metadata = fs::metadata(path)?.file_type();
+//             if metadata.is_file() {
+//                 let content = String::from_utf8_lossy(&fs::read(&entry)?).into_owned();
+//                 total_lines += content.lines().count() as u128;
+//                 if byte_toggle {
+//                     total_bytes += content.as_bytes().len() as u128;
+//                 }
+//                 continue;
+//             }
+// 
+//             if metadata.is_dir() {
+//                 let clone_entry = entry.clone();
+//                 let _linecount_result = linecount(Some(entry).clone(), byte_toggle, ignore_toggle);
+//                 let linecount = match _linecount_result {
+//                     Ok(success) => success,
+//                     Err(err) => {
+//                         eprintln!("{err}: skipping {:?}", Some(clone_entry));
+//                         continue;
+//                     }
+//                 };
+//                 total_lines += linecount.0;
+//                 total_bytes += linecount.1;
+//                 continue;
+//             };
+//     }
+//     Ok((total_lines, total_bytes))
+// }
+
+fn linecount_async(
     dir: Option<PathBuf>,
     byte_toggle: bool,
     ignore_toggle: bool,
-    total_lines: Arc<Mutex<u128>>,
-    total_bytes: Arc<Mutex<u128>>,
-    visited_dirs: Arc<Mutex<HashSet<String>>>, // Track visited directories
 ) -> Result<(u128, u128)> {
-    let mut handles = Vec::new();
-
+    let total_lines = Arc::new(Mutex::new(0));
+    let total_bytes = Arc::new(Mutex::new(0));
     let dir_path_binding = dir.unwrap_or(env::current_dir()?);
     let dir_path = dir_path_binding.as_path();
-    let dir_str = dir_path.to_str().unwrap_or_default().to_string();
+    //let ignore_vec = fetch_gitignore(&dir_path)?;
+    let mut handles = Vec::new();
 
-    if visited_dirs.lock().unwrap().contains(&dir_str) {
-        return Ok((0, 0));
-    }
-    visited_dirs.lock().unwrap().insert(dir_str);
+    let entries = fs::read_dir(dir_path)
+        .expect("Failed to read directory")
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
 
-    let directory_entries = fs::read_dir(dir_path)?;
-    for entry in directory_entries {
-        let entry = entry?.path();
+    for entry in entries {
         let path = entry.as_path();
-        let metadata = fs::metadata(path)?.file_type();
+        let filetype = fs::metadata(path)?.file_type();
 
-        if metadata.is_file() {
-            let total_lines = Arc::clone(&total_lines);
-            let total_bytes = Arc::clone(&total_bytes);
-            let handle = thread::spawn(move || {
-                let content = fs::read_to_string(&entry).unwrap_or_default();
-                let lines_count = content.lines().count() as u128;
-                let bytes_count = content.as_bytes().len() as u128;
+        if filetype.is_file() {
+            let content = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
+            let file_linecount = content.lines().count() as u128;
+            
+            let file_bytes: u128;
 
-                // Ensure safe updates
-                let mut lines = total_lines.lock().unwrap();
-                *lines += lines_count;
-
-                if byte_toggle {
-                    let mut bytes = total_bytes.lock().unwrap();
-                    *bytes += bytes_count;
-                }
-            });
-            handles.push(handle);
-        } else if metadata.is_dir() {
-            // Recursive directory processing
-            let total_lines = Arc::clone(&total_lines);
-            let total_bytes = Arc::clone(&total_bytes);
-            let clone_entry = entry.clone();
-            let visited_dirs = Arc::clone(&visited_dirs); // Pass visited_dirs to subdirectories
-            let handle = thread::spawn(move || {
-                // Recursive call to count lines in subdirectories
-                let _linecount_result = linecount(
-                    Some(entry), // Subdirectory
-                    byte_toggle,
-                    ignore_toggle,
-                    total_lines.clone(),
-                    total_bytes.clone(),
-                    visited_dirs.clone(), // Pass visited_dirs to subdirectories
-                );
-
-                match _linecount_result {
-                    Ok(linecount) => {
-                        // Accumulate line and byte counts from subdirectories
-                        let mut lines = total_lines.lock().unwrap();
-                        *lines += linecount.0;
-
+            *total_lines.lock().unwrap() += file_linecount;
+            if byte_toggle {
+                file_bytes = content.as_bytes().len() as u128;
+                *total_bytes.lock().unwrap() += file_bytes;
+            }
+        } else if filetype.is_dir() {
+            let handle = {
+                let total_lines = Arc::clone(&total_lines);
+                let total_bytes = Arc::clone(&total_bytes);
+                let path = PathBuf::from(path);
+        
+                thread::spawn(move || {
+                    let recursive_lc = linecount_async(
+                        Some(path),
+                        byte_toggle,
+                        ignore_toggle,
+                    );
+        
+                    if let Ok((lines, bytes)) = recursive_lc {
+                        *total_lines.lock().unwrap() += lines;
                         if byte_toggle {
-                            let mut bytes = total_bytes.lock().unwrap();
-                            *bytes += linecount.1;
+                            *total_bytes.lock().unwrap() += bytes;
                         }
                     }
-                    Err(err) => {
-                        eprintln!(
-                            "Error processing directory {}: {}",
-                            clone_entry.display(),
-                            err
-                        );
-                    }
-                }
-            });
+                })
+            };
             handles.push(handle);
         }
     }
-
-    // Wait for all threads to finish
     for handle in handles {
         handle.join().unwrap();
     }
 
-    // Return the final totals safely
     Ok(get_totals(total_lines, total_bytes))
 }
 
@@ -431,165 +441,165 @@ fn linecount_verbose(
 //          because of this the output looks scattered and disorganized.
 //
 //
-//fn linecount_verbose_async(
-//    dir: Option<PathBuf>,
-//    byte_toggle: bool,
-//    ignore_toggle: bool,
-//    mut indent_amount: Option<usize>,
-//) -> Result<(u128, u128)> {
-//    let total_lines = Arc::new(Mutex::new(0));
-//    let total_bytes = Arc::new(Mutex::new(0));
-//    let dir_path_binding = dir.unwrap_or(env::current_dir()?);
-//    let dir_path = dir_path_binding.as_path();
-//    let mut file_indent_from_zero_size = indent_amount.unwrap_or_default();
-//    let ignore_vec = fetch_gitignore(&dir_path)?;
-//    let mut handles = Vec::new();
-//
-//    if indent_amount.is_none() {
-//        indent_amount = Some(0);
-//    } else if indent_amount.unwrap() > 0 {
-//        file_indent_from_zero_size += 1;
-//    }
-//
-//    let (dir_indent, file_indent_from_dir, file_ident_from_zero) = (
-//        "─".repeat(indent_amount.unwrap_or_default()),
-//        "─".repeat(2),
-//        " ".repeat(file_indent_from_zero_size),
-//    );
-//    let dir_path_str = dir_path
-//        .file_name()
-//        .unwrap()
-//        .to_str()
-//        .unwrap_or_default()
-//        .blue()
-//        .bold();
-//
-//    match indent_amount {
-//        Some(0) => println!("{dir_indent}{dir_path_str}/"),
-//        _ => println!("├{dir_indent}{dir_path_str}/"),
-//    }
-//
-//    let entries = fs::read_dir(dir_path)
-//        .expect("Failed to read directory")
-//        .map(|entry| entry.unwrap().path())
-//        .collect::<Vec<_>>();
-//    let (mut files, mut dirs) = (Vec::new(), Vec::new());
-//
-//    for entry in entries {
-//        //if ignore_toggle {
-//        //    if ignore_vec.contains(&entry.file_name().unwrap().to_string_lossy().to_string()) {
-//        //        continue;
-//        //    }
-//        //}
-//
-//        if entry.is_file() {
-//            files.push(entry);
-//        } else {
-//            dirs.push(entry);
-//        }
-//    }
-//    files.sort();
-//    dirs.sort();
-//    let sorted_entries = files.iter().chain(dirs.iter());
-//
-//    for (idx, entry) in sorted_entries.enumerate() {
-//        let mut connector = "├";
-//        let path = entry.as_path();
-//        let filetype = fs::metadata(path)?.file_type();
-//
-//        if filetype.is_file() {
-//            let content = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
-//            let file_linecount = content.lines().count() as u128;
-//
-//            let mut file_bytes: u128 = 0;
-//
-//            *total_lines.lock().unwrap() += file_linecount;
-//            if byte_toggle {
-//                file_bytes = content.as_bytes().len() as u128;
-//                *total_bytes.lock().unwrap() += file_bytes;
-//            }
-//
-//            if entry.is_visible() && !ignore_vec.contains(&entry.file_name().unwrap().to_string_lossy().to_string()) {
-//                let filename = entry
-//                .file_name()
-//                .unwrap()
-//                .to_str()
-//                .unwrap_or("?")
-//                .to_string();
-//
-//                let filename = if filename.len() > FILENAME_RENDER_LIMIT {
-//                    format!("{}...", &filename[..FILENAME_RENDER_LIMIT])
-//                } else {
-//                    filename
-//                };
-//                if idx == files.len() - 1 {
-//                    connector = "└";
-//                }
-//
-//                let formatted_indent = match indent_amount {
-//                    Some(0) => format!("{file_ident_from_zero}{connector}{file_indent_from_dir}"),
-//                    _ => format!("|{file_ident_from_zero}{connector}{file_indent_from_dir}"),
-//                };
-//
-//                let formatted_output = match byte_toggle {
-//                    true => format!(
-//                        "{:width$} ({}L, {}B)",
-//                        {
-//                            match path.content_type() {
-//                                ContentType::MEDIA => filename.bright_magenta().to_string(),
-//                                ContentType::CODE => filename.cyan().to_string(),
-//                                ContentType::EXECUTABLE => filename.green().to_string(),
-//                                ContentType::TEXT => filename.truecolor(217, 50, 122).to_string(),
-//                                ContentType::LICENSE => filename.truecolor(0,0,255).to_string(),
-//                                ContentType::MAKEFILE => filename.red().to_string(),
-//                                _ => filename.to_string(),
-//                            }
-//                        },
-//                        file_linecount,
-//                        file_bytes,
-//                        width = WIDTH
-//                    ),
-//                    false => format!(
-//                        "{:width$} (lines: {})",
-//                        filename,
-//                        file_linecount,
-//                        width = WIDTH
-//                    ),
-//                };
-//                println!("{formatted_indent}{formatted_output}");
-//            }
-//        } else if filetype.is_dir() {
-//            let handle = {
-//                let total_lines = Arc::clone(&total_lines);
-//                let total_bytes = Arc::clone(&total_bytes);
-//                let path = PathBuf::from(path);
-//
-//                thread::spawn(move || {
-//                    let recursive_lc = linecount_verbose(
-//                        Some(path),
-//                        byte_toggle,
-//                        ignore_toggle,
-//                        Some(indent_amount.unwrap() + 2),
-//                    );
-//
-//                    if let Ok((lines, bytes)) = recursive_lc {
-//                        *total_lines.lock().unwrap() += lines;
-//                        if byte_toggle {
-//                            *total_bytes.lock().unwrap() += bytes;
-//                        }
-//                    }
-//                })
-//            };
-//            handles.push(handle);
-//        }
-//    }
-//    for handle in handles {
-//        handle.join().unwrap();
-//    }
-//
-//    Ok(get_totals(total_lines, total_bytes))
-//}
-//
+fn linecount_verbose_async(
+    dir: Option<PathBuf>,
+    byte_toggle: bool,
+    ignore_toggle: bool,
+    mut indent_amount: Option<usize>,
+) -> Result<(u128, u128)> {
+    let total_lines = Arc::new(Mutex::new(0));
+    let total_bytes = Arc::new(Mutex::new(0));
+    let dir_path_binding = dir.unwrap_or(env::current_dir()?);
+    let dir_path = dir_path_binding.as_path();
+    let mut file_indent_from_zero_size = indent_amount.unwrap_or_default();
+    let ignore_vec = fetch_gitignore(&dir_path)?;
+    let mut handles = Vec::new();
+
+    if indent_amount.is_none() {
+        indent_amount = Some(0);
+    } else if indent_amount.unwrap() > 0 {
+        file_indent_from_zero_size += 1;
+    }
+
+    let (dir_indent, file_indent_from_dir, file_ident_from_zero) = (
+        "─".repeat(indent_amount.unwrap_or_default()),
+        "─".repeat(2),
+        " ".repeat(file_indent_from_zero_size),
+    );
+    let dir_path_str = dir_path
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap_or_default()
+        .blue()
+        .bold();
+
+    match indent_amount {
+        Some(0) => println!("{dir_indent}{dir_path_str}/"),
+        _ => println!("├{dir_indent}{dir_path_str}/"),
+    }
+
+    let entries = fs::read_dir(dir_path)
+        .expect("Failed to read directory")
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    let (mut files, mut dirs) = (Vec::new(), Vec::new());
+
+    for entry in entries {
+        //if ignore_toggle {
+        //    if ignore_vec.contains(&entry.file_name().unwrap().to_string_lossy().to_string()) {
+        //        continue;
+        //    }
+        //}
+
+        if entry.is_file() {
+            files.push(entry);
+        } else {
+            dirs.push(entry);
+        }
+    }
+    files.sort();
+    dirs.sort();
+    let sorted_entries = files.iter().chain(dirs.iter());
+
+    for (idx, entry) in sorted_entries.enumerate() {
+        let mut connector = "├";
+        let path = entry.as_path();
+        let filetype = fs::metadata(path)?.file_type();
+
+        if filetype.is_file() {
+            let content = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
+            let file_linecount = content.lines().count() as u128;
+
+            let mut file_bytes: u128 = 0;
+
+            *total_lines.lock().unwrap() += file_linecount;
+            if byte_toggle {
+                file_bytes = content.as_bytes().len() as u128;
+                *total_bytes.lock().unwrap() += file_bytes;
+            }
+
+            if entry.is_visible() && !ignore_vec.contains(&entry.file_name().unwrap().to_string_lossy().to_string()) {
+                let filename = entry
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap_or("?")
+                .to_string();
+
+                let filename = if filename.len() > FILENAME_RENDER_LIMIT {
+                    format!("{}...", &filename[..FILENAME_RENDER_LIMIT])
+                } else {
+                    filename
+                };
+                if idx == files.len() - 1 {
+                    connector = "└";
+                }
+
+                let formatted_indent = match indent_amount {
+                    Some(0) => format!("{file_ident_from_zero}{connector}{file_indent_from_dir}"),
+                    _ => format!("|{file_ident_from_zero}{connector}{file_indent_from_dir}"),
+                };
+
+                let formatted_output = match byte_toggle {
+                    true => format!(
+                        "{:width$} ({}L, {}B)",
+                        {
+                            match path.content_type() {
+                                ContentType::MEDIA => filename.bright_magenta().to_string(),
+                                ContentType::CODE => filename.cyan().to_string(),
+                                ContentType::EXECUTABLE => filename.green().to_string(),
+                                ContentType::TEXT => filename.truecolor(217, 50, 122).to_string(),
+                                ContentType::LICENSE => filename.truecolor(0,0,255).to_string(),
+                                ContentType::MAKEFILE => filename.red().to_string(),
+                                _ => filename.to_string(),
+                            }
+                        },
+                        file_linecount,
+                        file_bytes,
+                        width = WIDTH
+                    ),
+                    false => format!(
+                        "{:width$} (lines: {})",
+                        filename,
+                        file_linecount,
+                        width = WIDTH
+                    ),
+                };
+                println!("{formatted_indent}{formatted_output}");
+            }
+        } else if filetype.is_dir() {
+            let handle = {
+                let total_lines = Arc::clone(&total_lines);
+                let total_bytes = Arc::clone(&total_bytes);
+                let path = PathBuf::from(path);
+
+                thread::spawn(move || {
+                    let recursive_lc = linecount_verbose(
+                        Some(path),
+                        byte_toggle,
+                        ignore_toggle,
+                        Some(indent_amount.unwrap() + 2),
+                    );
+
+                    if let Ok((lines, bytes)) = recursive_lc {
+                        *total_lines.lock().unwrap() += lines;
+                        if byte_toggle {
+                            *total_bytes.lock().unwrap() += bytes;
+                        }
+                    }
+                })
+            };
+            handles.push(handle);
+        }
+    }
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    Ok(get_totals(total_lines, total_bytes))
+}
+
 fn get_totals(total_lines: Arc<Mutex<u128>>, total_bytes: Arc<Mutex<u128>>) -> (u128, u128) {
     let lines = total_lines.lock().unwrap();
     let bytes = total_bytes.lock().unwrap();
@@ -623,20 +633,25 @@ fn main() -> std::io::Result<()> {
         )
         .arg(Arg::new("verbose").short('v').long("verbose"))
         .arg(Arg::new("bytes").short('b').long("bytes"))
+        .arg(Arg::new("test-async").long("test-async"))
         .get_matches();
 
     let path = calls.get_one::<String>("path").map(PathBuf::from);
 
-    let total_lines = Arc::new(Mutex::new(0));
-    let total_bytes = Arc::new(Mutex::new(0));
-    let visisted_dir = Arc::new(Mutex::new(HashSet::new()));
-
-    if calls.is_present("verbose") {
-        if calls.is_present("bytes") {
-            let start_time = Instant::now();
-            let result = linecount_verbose(path, true, true, None)?;
+    if calls.contains_id("test-async") {
+        let start_time = Instant::now();
+            let (lines, bytes) = linecount_verbose_async(path, true, true, None)?;
             let end_time = Instant::now();
-            let (lines, bytes) = result;
+            let f_bytes = format_byte_count(bytes);
+            println!(
+                "[lines]       {lines}\n[bytes]       {f_bytes}\n[time]        {:?}",
+                end_time - start_time
+            );
+    } else if calls.contains_id("verbose") {
+        if calls.contains_id("bytes") && !calls.contains_id("test-async"){
+            let start_time = Instant::now();
+            let (lines, bytes) = linecount_verbose(path, true, true, None)?;
+            let end_time = Instant::now();
             let f_bytes = format_byte_count(bytes);
             println!(
                 "[lines]       {lines}\n[bytes]       {f_bytes}\n[time]        {:?}",
@@ -653,15 +668,12 @@ fn main() -> std::io::Result<()> {
             );
         }
     } else {
-        if calls.is_present("bytes") {
+        if calls.contains_id("bytes") {
             let start_time = Instant::now();
-            let (lines, bytes) = linecount(
-                None,
+            let (lines, bytes) = linecount_async(
+                path,
                 true,
                 false,
-                Arc::clone(&total_lines),
-                Arc::clone(&total_bytes),
-                Arc::clone(&visisted_dir),
             )?;
             let end_time = Instant::now();
             let f_bytes = format_byte_count(bytes);
@@ -671,13 +683,10 @@ fn main() -> std::io::Result<()> {
             );
         } else {
             let start_time = Instant::now();
-            let (lines, _bytes) = linecount(
-                None,
+            let (lines, _bytes) = linecount_async(
+                path,
                 false,
                 false,
-                Arc::clone(&total_lines),
-                Arc::clone(&total_bytes),
-                Arc::clone(&visisted_dir),
             )?;
             let end_time = Instant::now();
             println!(
