@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use std::{env, fs};
+use std::collections::HashSet;
 
 const WIDTH: usize = 20;
 const FILENAME_RENDER_LIMIT: usize = 60;
@@ -21,6 +22,61 @@ enum ContentType {
     TEXT,
     LICENSE,
     MAKEFILE,
+}
+
+lazy_static::lazy_static! {
+    static ref CODE_EXTENSIONS: HashSet<&'static str> = [
+        "c", "h", "cpp", "hpp", "cc", "cxx", "hh", "hxx", "cs", "java", "class", "jar", "kt", "kts",
+        "js", "jsx", "mjs", "cjs", "ts", "tsx", "py", "pyc", "pyd", "pyo", "rb", "erb",
+        "php", "phar", "go", "rs", "rlib", "swift", "dart", "scala", "lua", "r", "pl", "pm", "sql",
+        "html", "htm", "xhtml", "xml", "css", "scss", "sass", "json", "yaml", "yml", "toml",
+        "env", "ini", "cfg", "md", "rst", "cmake", "mk", "dockerfile", "dockerignore", 
+        "gitignore", "gitattributes"
+    ].iter().copied().collect();
+
+    static ref MEDIA_EXTENSIONS: HashSet<&'static str> = [
+        "png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "webp", "svg", "ico", "heic", "avif",
+        "mp3", "wav", "flac", "aac", "ogg", "opus", "m4a", "wma", "aiff", "alac", "amr",
+        "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpeg", "mpg", "3gp", "ogv"
+    ].iter().copied().collect();
+
+    static ref EXECUTABLE_EXTENSIONS: HashSet<&'static str> = [
+        "exe", "bat", "cmd", "msi", "run", "out", "bin", "app", "jar", "sh", "bash", "zsh",
+        "ps1", "psm1", "psd1"
+    ].iter().copied().collect();
+
+    static ref TEXT_EXTENSIONS: HashSet<&'static str> = [
+        "txt", "md", "rtf", "csv", "log", "pdf", "doc", "docx", "odt", "tex", "pages"
+    ].iter().copied().collect();
+}
+
+trait Content {
+    fn content_type(&self) -> ContentType;
+}
+
+impl Content for Path {
+    fn content_type(&self) -> ContentType {
+        if let Some(ext) = self.extension().and_then(|s| s.to_str()) {
+            if CODE_EXTENSIONS.contains(ext) {
+                return ContentType::CODE;
+            }
+            if MEDIA_EXTENSIONS.contains(ext) {
+                return ContentType::MEDIA;
+            }
+            if EXECUTABLE_EXTENSIONS.contains(ext) || (self.is_unix_executable().unwrap_or(false) && !TEXT_EXTENSIONS.contains(ext)) {
+                return ContentType::EXECUTABLE;
+            }
+            if TEXT_EXTENSIONS.contains(ext) {
+                return ContentType::TEXT;
+            }
+        }
+
+        match self.file_name().and_then(|s| s.to_str()) {
+            Some("LICENSE") => ContentType::LICENSE,
+            Some("Makefile") => ContentType::MAKEFILE,
+            _ => ContentType::NORMAL,
+        }
+    }
 }
 
 trait Visible {
@@ -49,129 +105,6 @@ impl UnixExecutable for Path {
     }
 }
 
-trait Content {
-    fn content_type(&self) -> ContentType;
-}
-
-impl Content for Path {
-    fn content_type(&self) -> ContentType {
-        let code_extensions = vec![
-            // General programming languages
-            "c",
-            "h",
-            "cpp",
-            "hpp",
-            "cc",
-            "cxx",
-            "hh",
-            "hxx", // C/C++
-            "cs",
-            "java",
-            "class",
-            "jar",
-            "kt",
-            "kts", // C#, Java, Kotlin
-            "js",
-            "jsx",
-            "mjs",
-            "cjs",
-            "ts",
-            "tsx", // JavaScript, TypeScript
-            "py",
-            "pyc",
-            "pyd",
-            "pyo",
-            "rb",
-            "erb", // Python, Ruby
-            "php",
-            "phar",
-            "go",
-            "rs",
-            "rlib",
-            "swift",
-            "dart", // PHP, Go, Rust, Swift, Dart
-            "scala",
-            "lua",
-            "r",
-            "pl",
-            "pm",
-            "sql", // Scala, Lua, R, Perl, SQL
-            // Web & Stylesheets
-            "html",
-            "htm",
-            "xhtml",
-            "xml",
-            "css",
-            "scss",
-            "sass",
-            // Config & Data
-            "json",
-            "yaml",
-            "yml",
-            "toml",
-            "env",
-            "ini",
-            "cfg",
-            // Documentation & Build
-            "md",
-            "rst",
-            "cmake",
-            "mk",
-            // DevOps & Version Control
-            "dockerfile",
-            "dockerignore",
-            "gitignore",
-            "gitattributes",
-        ];
-
-        let media_extensions = vec![
-            // Image extensions
-            "png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "webp", "svg", "ico", "heic", "avif",
-            // Audio extensions
-            "mp3", "wav", "flac", "aac", "ogg", "opus", "m4a", "wma", "aiff", "alac", "amr",
-            // Video extensions
-            "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpeg", "mpg", "3gp", "ogv",
-        ];
-
-        let executable_extensions = vec![
-            // Windows executables
-            "exe", "bat", "cmd", "msi", // Unix/Linux/macOS binary executables
-            "run", "out", "bin", "app", // Java executables
-            "jar", "sh", "bash", "zsh", // Scripts
-            "ps1", "psm1", "psd1", // PowerShell (Windows)
-        ];
-
-        let text_extensions = vec![
-            // Plain text formats
-            "txt", "md", "rtf", "csv", "log", // Documentation formats (including PDF)
-            "pdf", "doc", "docx", "odt", "tex", "pages",
-        ];
-
-        if code_extensions.contains(&self.extension().unwrap_or_default().to_str().unwrap()) {
-            return ContentType::CODE;
-        } else if media_extensions.contains(&self.extension().unwrap_or_default().to_str().unwrap())
-        {
-            return ContentType::MEDIA;
-        } else if executable_extensions
-            .contains(&self.extension().unwrap_or_default().to_str().unwrap())
-            || self.is_unix_executable().unwrap()
-                && !text_extensions
-                    .contains(&self.extension().unwrap_or_default().to_str().unwrap())
-        {
-            return ContentType::EXECUTABLE;
-        } else if text_extensions.contains(&self.extension().unwrap_or_default().to_str().unwrap())
-        {
-            return ContentType::TEXT;
-        } else if self.file_name().unwrap() == "LICENSE" {
-            return ContentType::LICENSE;
-        } else if self.file_name().unwrap() == "Makefile" {
-            return ContentType::MAKEFILE;
-        } else {
-            return ContentType::NORMAL;
-        }
-    }
-}
-
 fn fetch_gitignore(path: &Path) -> Result<Vec<String>> {
     let gitignore = path.join(".gitignore");
     if !gitignore.exists() {
@@ -193,7 +126,7 @@ fn fetch_gitignore(path: &Path) -> Result<Vec<String>> {
 }
 
 //Non-asynchronous Linecount func, single-threaded. Only here incase I decide to reimplement it.
-fn linecount(dir: Option<PathBuf>, byte_toggle: bool, ignore_toggle: bool) -> Result<(u128, u128)> {
+fn linecount(dir: Option<PathBuf>) -> Result<(u128, u128)> {
     let (mut total_lines, mut total_bytes) = (0, 0);
 
     let dir_path_binding = dir.unwrap_or(env::current_dir()?);
@@ -208,15 +141,13 @@ fn linecount(dir: Option<PathBuf>, byte_toggle: bool, ignore_toggle: bool) -> Re
         if metadata.is_file() {
             let content = String::from_utf8_lossy(&fs::read(&entry)?).into_owned();
             total_lines += content.lines().count() as u128;
-            if byte_toggle {
-                total_bytes += content.as_bytes().len() as u128;
-            }
+            total_bytes += content.as_bytes().len() as u128;
             continue;
         }
 
         if metadata.is_dir() {
             let clone_entry = entry.clone();
-            let _linecount_result = linecount(Some(entry).clone(), byte_toggle, ignore_toggle);
+            let _linecount_result = linecount(Some(entry).clone());
             let linecount = match _linecount_result {
                 Ok(success) => success,
                 Err(err) => {
@@ -232,7 +163,7 @@ fn linecount(dir: Option<PathBuf>, byte_toggle: bool, ignore_toggle: bool) -> Re
     Ok((total_lines, total_bytes))
 }
 
-fn linecount_async(dir: Option<PathBuf>, ignore_toggle: bool) -> Result<(u128, u128)> {
+fn linecount_async(dir: Option<PathBuf>) -> Result<(u128, u128)> {
     let total_lines = Arc::new(Mutex::new(0));
     let total_bytes = Arc::new(Mutex::new(0));
     let dir_path_binding = dir.unwrap_or(env::current_dir()?);
@@ -263,7 +194,7 @@ fn linecount_async(dir: Option<PathBuf>, ignore_toggle: bool) -> Result<(u128, u
                 let path = PathBuf::from(path);
 
                 thread::spawn(move || {
-                    let recursive_lc = linecount_async(Some(path), ignore_toggle);
+                    let recursive_lc = linecount_async(Some(path));
 
                     if let Ok((lines, bytes)) = recursive_lc {
                         *total_lines.lock().unwrap() += lines;
@@ -283,7 +214,6 @@ fn linecount_async(dir: Option<PathBuf>, ignore_toggle: bool) -> Result<(u128, u
 
 fn linecount_display(
     dir: Option<PathBuf>,
-    ignore_toggle: bool,
     mut indent_amount: Option<usize>,
 ) -> Result<(u128, u128)> {
     let (mut total_lines, mut total_bytes) = (0, 0);
@@ -394,7 +324,6 @@ fn linecount_display(
         } else if filetype.is_dir() {
             if let Ok((lines, bytes)) = linecount_display(
                 Some(PathBuf::from(&path)),
-                ignore_toggle,
                 Some(indent_amount.unwrap_or_default() + 2),
             ) {
                 total_lines += lines;
@@ -412,7 +341,6 @@ fn linecount_display(
 //
 fn linecount_visual_async(
     dir: Option<PathBuf>,
-    ignore_toggle: bool,
     mut indent_amount: Option<usize>,
 ) -> Result<(u128, u128)> {
     let total_lines = Arc::new(Mutex::new(0));
@@ -531,7 +459,6 @@ fn linecount_visual_async(
                 thread::spawn(move || {
                     let recursive_lc = linecount_visual_async(
                         Some(path),
-                        ignore_toggle,
                         Some(indent_amount.unwrap() + 2),
                     );
 
@@ -605,12 +532,12 @@ fn main() -> std::io::Result<()> {
 
     if *calls.get_one::<bool>("display").unwrap_or(&false) {
         let start_time = Instant::now();
-        let (lines, bytes) = linecount_display(path, true, None)?;
+        let (lines, bytes) = linecount_display(path, None)?;
         let end_time = Instant::now();
         format_and_print_results(lines, bytes, end_time - start_time);
     } else {
         let start_time = Instant::now();
-        let (lines, bytes) = linecount_async(path, false)?;
+        let (lines, bytes) = linecount_async(path)?;
         let end_time = Instant::now();
         format_and_print_results(lines, bytes, end_time - start_time);
     }
