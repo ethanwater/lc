@@ -5,16 +5,16 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::{env, fs};
 
 const WIDTH: usize = 20;
 const FILENAME_RENDER_LIMIT: usize = 60;
 
 enum ContentType {
-    CODE,       //LIGHT BLUE
-    MEDIA,      //IMAGE, AUDIO, VIDEO PURPLE
-    EXECUTABLE, //RED
+    CODE,
+    MEDIA,
+    EXECUTABLE,
     NORMAL,
     TEXT,
     LICENSE,
@@ -190,7 +190,7 @@ fn fetch_gitignore(path: &Path) -> Result<Vec<String>> {
     Ok(list_to_ignore)
 }
 
-//Default Linecount func, single-threaded. Only here incase I decide to reimplement it.
+//Non-asynchronous Linecount func, single-threaded. Only here incase I decide to reimplement it.
 //
 // fn linecount(dir: Option<PathBuf>, byte_toggle: bool, ignore_toggle: bool) -> Result<(u128, u128)> {
 //     let (mut total_lines, mut total_bytes) = (0, 0);
@@ -231,11 +231,7 @@ fn fetch_gitignore(path: &Path) -> Result<Vec<String>> {
 //     Ok((total_lines, total_bytes))
 // }
 
-fn linecount_async(
-    dir: Option<PathBuf>,
-    byte_toggle: bool,
-    ignore_toggle: bool,
-) -> Result<(u128, u128)> {
+fn linecount_async(dir: Option<PathBuf>, ignore_toggle: bool) -> Result<(u128, u128)> {
     let total_lines = Arc::new(Mutex::new(0));
     let total_bytes = Arc::new(Mutex::new(0));
     let dir_path_binding = dir.unwrap_or(env::current_dir()?);
@@ -255,14 +251,10 @@ fn linecount_async(
         if filetype.is_file() {
             let content = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
             let file_linecount = content.lines().count() as u128;
-
-            let file_bytes: u128;
+            let file_bytes = content.as_bytes().len() as u128;
 
             *total_lines.lock().unwrap() += file_linecount;
-            if byte_toggle {
-                file_bytes = content.as_bytes().len() as u128;
-                *total_bytes.lock().unwrap() += file_bytes;
-            }
+            *total_bytes.lock().unwrap() += file_bytes;
         } else if filetype.is_dir() {
             let handle = {
                 let total_lines = Arc::clone(&total_lines);
@@ -270,13 +262,11 @@ fn linecount_async(
                 let path = PathBuf::from(path);
 
                 thread::spawn(move || {
-                    let recursive_lc = linecount_async(Some(path), byte_toggle, ignore_toggle);
+                    let recursive_lc = linecount_async(Some(path), ignore_toggle);
 
                     if let Ok((lines, bytes)) = recursive_lc {
                         *total_lines.lock().unwrap() += lines;
-                        if byte_toggle {
-                            *total_bytes.lock().unwrap() += bytes;
-                        }
+                        *total_bytes.lock().unwrap() += bytes;
                     }
                 })
             };
@@ -290,9 +280,8 @@ fn linecount_async(
     Ok(get_totals(total_lines, total_bytes))
 }
 
-fn linecount_verbose(
+fn linecount_display(
     dir: Option<PathBuf>,
-    byte_toggle: bool,
     ignore_toggle: bool,
     mut indent_amount: Option<usize>,
 ) -> Result<(u128, u128)> {
@@ -300,7 +289,7 @@ fn linecount_verbose(
     let dir_path_binding = dir.unwrap_or(env::current_dir()?);
     let dir_path = dir_path_binding.as_path();
     let mut file_indent_from_zero_size = indent_amount.unwrap_or_default();
-    let ignore_vec = fetch_gitignore(&dir_path)?;
+    //let ignore_vec = fetch_gitignore(&dir_path)?;
 
     if indent_amount.is_none() {
         indent_amount = Some(0);
@@ -357,69 +346,53 @@ fn linecount_verbose(
         if filetype.is_file() {
             let content = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
             let file_linecount = content.lines().count() as u128;
-            let mut file_bytes: u128 = 0;
+            let file_bytes = content.as_bytes().len() as u128;
 
             total_lines += file_linecount;
-            if byte_toggle {
-                file_bytes = content.as_bytes().len() as u128;
-                total_bytes += file_bytes;
+            total_bytes += file_bytes;
+
+            let filename = entry
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap_or("?")
+                .to_string();
+
+            let filename = if filename.len() > FILENAME_RENDER_LIMIT {
+                format!("{}...", &filename[..FILENAME_RENDER_LIMIT])
+            } else {
+                filename
+            };
+            if idx == files.len() - 1 {
+                connector = "└";
             }
 
-            if entry.is_visible()
-                && !ignore_vec.contains(&entry.file_name().unwrap().to_string_lossy().to_string())
-            {
-                let filename = entry
-                    .file_name()
-                    .unwrap()
-                    .to_str()
-                    .unwrap_or("?")
-                    .to_string();
+            let formatted_indent = match indent_amount {
+                Some(0) => format!("{file_ident_from_zero}{connector}{file_indent_from_dir}"),
+                _ => format!("│{file_ident_from_zero}{connector}{file_indent_from_dir}"),
+            };
 
-                let filename = if filename.len() > FILENAME_RENDER_LIMIT {
-                    format!("{}...", &filename[..FILENAME_RENDER_LIMIT])
-                } else {
-                    filename
-                };
-                if idx == files.len() - 1 {
-                    connector = "└";
-                }
-
-                let formatted_indent = match indent_amount {
-                    Some(0) => format!("{file_ident_from_zero}{connector}{file_indent_from_dir}"),
-                    _ => format!("|{file_ident_from_zero}{connector}{file_indent_from_dir}"),
-                };
-
-                let formatted_output = match byte_toggle {
-                    true => format!(
-                        "{:width$} ({}L, {}B)",
-                        {
-                            match path.content_type() {
-                                ContentType::MEDIA => filename.bright_magenta().to_string(),
-                                ContentType::CODE => filename.cyan().to_string(),
-                                ContentType::EXECUTABLE => filename.green().to_string(),
-                                ContentType::TEXT => filename.truecolor(217, 50, 122).to_string(),
-                                ContentType::LICENSE => filename.truecolor(0, 0, 255).to_string(),
-                                ContentType::MAKEFILE => filename.red().to_string(),
-                                _ => filename.to_string(),
-                            }
-                        },
-                        file_linecount,
-                        file_bytes,
-                        width = WIDTH
-                    ),
-                    false => format!(
-                        "{:width$} (lines: {})",
-                        filename,
-                        file_linecount,
-                        width = WIDTH
-                    ),
-                };
-                println!("{formatted_indent}{formatted_output}");
-            }
+            let formatted_output = format!(
+                "{:width$} ({}L, {}B)",
+                {
+                    match path.content_type() {
+                        ContentType::MEDIA => filename.bright_magenta().to_string(),
+                        ContentType::CODE => filename.cyan().to_string(),
+                        ContentType::EXECUTABLE => filename.green().to_string(),
+                        ContentType::TEXT => filename.truecolor(217, 50, 122).to_string(),
+                        ContentType::LICENSE => filename.truecolor(0, 0, 255).to_string(),
+                        ContentType::MAKEFILE => filename.red().to_string(),
+                        _ => filename.to_string(),
+                    }
+                },
+                file_linecount,
+                file_bytes,
+                width = WIDTH
+            );
+            println!("{formatted_indent}{formatted_output}");
         } else if filetype.is_dir() {
-            if let Ok((lines, bytes)) = linecount_verbose(
+            if let Ok((lines, bytes)) = linecount_display(
                 Some(PathBuf::from(&path)),
-                byte_toggle,
                 ignore_toggle,
                 Some(indent_amount.unwrap_or_default() + 2),
             ) {
@@ -431,14 +404,13 @@ fn linecount_verbose(
     Ok((total_lines, total_bytes))
 }
 
-//EXPERIMENTAL: runs linecount_verbose via paralellization. has significant increase in speed.
+//EXPERIMENTAL: runs linecount_display via paralellization. has significant increase in speed.
 //   -BUGS: since the function operates in parrell, printing the treemap is unreliable since order is not guaranteed.
 //          because of this the output looks scattered and disorganized.
 //
 //
-fn linecount_verbose_async(
+fn linecount_visual_async(
     dir: Option<PathBuf>,
-    byte_toggle: bool,
     ignore_toggle: bool,
     mut indent_amount: Option<usize>,
 ) -> Result<(u128, u128)> {
@@ -505,14 +477,10 @@ fn linecount_verbose_async(
         if filetype.is_file() {
             let content = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
             let file_linecount = content.lines().count() as u128;
-
-            let mut file_bytes: u128 = 0;
+            let file_bytes = content.as_bytes().len() as u128;
 
             *total_lines.lock().unwrap() += file_linecount;
-            if byte_toggle {
-                file_bytes = content.as_bytes().len() as u128;
-                *total_bytes.lock().unwrap() += file_bytes;
-            }
+            *total_bytes.lock().unwrap() += file_bytes;
 
             if entry.is_visible()
                 && !ignore_vec.contains(&entry.file_name().unwrap().to_string_lossy().to_string())
@@ -535,34 +503,26 @@ fn linecount_verbose_async(
 
                 let formatted_indent = match indent_amount {
                     Some(0) => format!("{file_ident_from_zero}{connector}{file_indent_from_dir}"),
-                    _ => format!("|{file_ident_from_zero}{connector}{file_indent_from_dir}"),
+                    _ => format!("│{file_ident_from_zero}{connector}{file_indent_from_dir}"),
                 };
 
-                let formatted_output = match byte_toggle {
-                    true => format!(
-                        "{:width$} ({}L, {}B)",
-                        {
-                            match path.content_type() {
-                                ContentType::MEDIA => filename.bright_magenta().to_string(),
-                                ContentType::CODE => filename.cyan().to_string(),
-                                ContentType::EXECUTABLE => filename.green().to_string(),
-                                ContentType::TEXT => filename.truecolor(217, 50, 122).to_string(),
-                                ContentType::LICENSE => filename.truecolor(0, 0, 255).to_string(),
-                                ContentType::MAKEFILE => filename.red().to_string(),
-                                _ => filename.to_string(),
-                            }
-                        },
-                        file_linecount,
-                        file_bytes,
-                        width = WIDTH
-                    ),
-                    false => format!(
-                        "{:width$} (lines: {})",
-                        filename,
-                        file_linecount,
-                        width = WIDTH
-                    ),
-                };
+                let formatted_output = format!(
+                    "{:width$} ({}L, {}B)",
+                    {
+                        match path.content_type() {
+                            ContentType::MEDIA => filename.bright_magenta().to_string(),
+                            ContentType::CODE => filename.cyan().to_string(),
+                            ContentType::EXECUTABLE => filename.green().to_string(),
+                            ContentType::TEXT => filename.truecolor(217, 50, 122).to_string(),
+                            ContentType::LICENSE => filename.truecolor(0, 0, 255).to_string(),
+                            ContentType::MAKEFILE => filename.red().to_string(),
+                            _ => filename.to_string(),
+                        }
+                    },
+                    file_linecount,
+                    file_bytes,
+                    width = WIDTH
+                );
                 println!("{formatted_indent}{formatted_output}");
             }
         } else if filetype.is_dir() {
@@ -572,18 +532,15 @@ fn linecount_verbose_async(
                 let path = PathBuf::from(path);
 
                 thread::spawn(move || {
-                    let recursive_lc = linecount_verbose(
+                    let recursive_lc = linecount_visual_async(
                         Some(path),
-                        byte_toggle,
                         ignore_toggle,
                         Some(indent_amount.unwrap() + 2),
                     );
 
                     if let Ok((lines, bytes)) = recursive_lc {
                         *total_lines.lock().unwrap() += lines;
-                        if byte_toggle {
-                            *total_bytes.lock().unwrap() += bytes;
-                        }
+                        *total_bytes.lock().unwrap() += bytes;
                     }
                 })
             };
@@ -615,6 +572,18 @@ fn format_byte_count(byte_count: u128) -> String {
     }
 }
 
+fn format_and_print_results(lines: u128, bytes: u128, time: Duration) {
+    let f_bytes = format_byte_count(bytes);
+    println!("╭───────────────────────────────────────────────────╮");
+    println!(
+        "│{:<51}│\n│{:<51}│\n│{:<51}│",
+        format!("Lines       :{lines}"),
+        format!("Bytes       :{f_bytes}"),
+        format!("Time Taken  :{:.5} Seconds", time.as_secs_f64())
+    );
+    println!("╰───────────────────────────────────────────────────╯")
+}
+
 fn main() -> std::io::Result<()> {
     let calls = App::new("lc")
         .version("1.2")
@@ -628,8 +597,7 @@ fn main() -> std::io::Result<()> {
                 .value_name("PATH")
                 .help("Provides a path to lc"),
         )
-        .arg(Arg::new("verbose").short('v').long("verbose"))
-        .arg(Arg::new("bytes").short('b').long("bytes"))
+        .arg(Arg::new("display").short('d').long("display"))
         .arg(Arg::new("test-async").long("test-async"))
         .get_matches();
 
@@ -637,52 +605,19 @@ fn main() -> std::io::Result<()> {
 
     if calls.contains_id("test-async") {
         let start_time = Instant::now();
-        let (lines, bytes) = linecount_verbose_async(path, true, true, None)?;
+        let (lines, bytes) = linecount_visual_async(path, true, None)?;
         let end_time = Instant::now();
-        let f_bytes = format_byte_count(bytes);
-        println!(
-            "[lines]       {lines}\n[bytes]       {f_bytes}\n[time]        {:?}",
-            end_time - start_time
-        );
-    } else if calls.contains_id("verbose") {
-        if calls.contains_id("bytes") && !calls.contains_id("test-async") {
-            let start_time = Instant::now();
-            let (lines, bytes) = linecount_verbose(path, true, true, None)?;
-            let end_time = Instant::now();
-            let f_bytes = format_byte_count(bytes);
-            println!(
-                "[lines]       {lines}\n[bytes]       {f_bytes}\n[time]        {:?}",
-                end_time - start_time
-            );
-        } else {
-            let start_time = Instant::now();
-            let result = linecount_verbose(path, false, true, None)?;
-            let end_time = Instant::now();
-            let (lines, _bytes) = result;
-            println!(
-                "[lines]       {lines}\n[time]        {:?}",
-                end_time - start_time
-            );
-        }
+        format_and_print_results(lines, bytes, end_time-start_time);
+    } else if calls.contains_id("display") {
+        let start_time = Instant::now();
+        let (lines, bytes) = linecount_display(path, true, None)?;
+        let end_time = Instant::now();
+        format_and_print_results(lines, bytes, end_time-start_time);
     } else {
-        if calls.contains_id("bytes") {
-            let start_time = Instant::now();
-            let (lines, bytes) = linecount_async(path, true, false)?;
-            let end_time = Instant::now();
-            let f_bytes = format_byte_count(bytes);
-            println!(
-                "[lines]       {lines}L\n[bytes]       {f_bytes}\n[time]        {:?}",
-                end_time - start_time
-            );
-        } else {
-            let start_time = Instant::now();
-            let (lines, _bytes) = linecount_async(path, false, false)?;
-            let end_time = Instant::now();
-            println!(
-                "[lines]       {lines}\n[time]        {:?}",
-                end_time - start_time
-            );
-        }
+        let start_time = Instant::now();
+        let (lines, bytes) = linecount_async(path, false)?;
+        let end_time = Instant::now();
+        format_and_print_results(lines, bytes, end_time-start_time);
     }
     Ok(())
 }

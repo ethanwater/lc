@@ -1,12 +1,12 @@
-.PHONY: async #the DEFAULT linecount func. multi-threaded.
-default:
-	cargo r -- -b
+.PHONY: def #the DEFAULT linecount func. multi-threaded.
+def:
+	@cargo r 
 
-.PHONY: verbose #displays filetree. single-threaded.
-verbose:
-	cargo r -- -v -b
+.PHONY: display #displays filetree. single-threaded.
+display:
+	@cargo r -- -d 
 
-.PHONY: verbose-async #displays filetree. multi-threaded (unreliable print order)
-verbose-async:
-	cargo r -- --test-async
+.PHONY: display-async #displays filetree. multi-threaded (unreliable print order)
+display-async:
+	@cargo r -- --test-async
 
