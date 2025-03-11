@@ -1,12 +1,12 @@
 use clap::{App, Arg, ArgAction};
-use std::io::Result;
-use std::path::{Path, PathBuf};
-use std::time::Instant;
-use std::{env, fs};
 use colored::Colorize;
+use std::io::Result;
 use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Instant;
+use std::{env, fs};
 
 const WIDTH: usize = 20;
 const FILENAME_RENDER_LIMIT: usize = 60;
@@ -194,15 +194,15 @@ fn fetch_gitignore(path: &Path) -> Result<Vec<String>> {
 //
 // fn linecount(dir: Option<PathBuf>, byte_toggle: bool, ignore_toggle: bool) -> Result<(u128, u128)> {
 //     let (mut total_lines, mut total_bytes) = (0, 0);
-// 
+//
 //     let dir_path_binding = dir.unwrap_or(env::current_dir()?);
 //     let dir_path = dir_path_binding.as_path();
-// 
+//
 //     let directory_entries = fs::read_dir(dir_path)?;
 //     for entry in directory_entries {
 //         let entry = entry?.path();
 //         let path = entry.as_path();
-// 
+//
 //             let metadata = fs::metadata(path)?.file_type();
 //             if metadata.is_file() {
 //                 let content = String::from_utf8_lossy(&fs::read(&entry)?).into_owned();
@@ -212,7 +212,7 @@ fn fetch_gitignore(path: &Path) -> Result<Vec<String>> {
 //                 }
 //                 continue;
 //             }
-// 
+//
 //             if metadata.is_dir() {
 //                 let clone_entry = entry.clone();
 //                 let _linecount_result = linecount(Some(entry).clone(), byte_toggle, ignore_toggle);
@@ -255,7 +255,7 @@ fn linecount_async(
         if filetype.is_file() {
             let content = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
             let file_linecount = content.lines().count() as u128;
-            
+
             let file_bytes: u128;
 
             *total_lines.lock().unwrap() += file_linecount;
@@ -268,14 +268,10 @@ fn linecount_async(
                 let total_lines = Arc::clone(&total_lines);
                 let total_bytes = Arc::clone(&total_bytes);
                 let path = PathBuf::from(path);
-        
+
                 thread::spawn(move || {
-                    let recursive_lc = linecount_async(
-                        Some(path),
-                        byte_toggle,
-                        ignore_toggle,
-                    );
-        
+                    let recursive_lc = linecount_async(Some(path), byte_toggle, ignore_toggle);
+
                     if let Ok((lines, bytes)) = recursive_lc {
                         *total_lines.lock().unwrap() += lines;
                         if byte_toggle {
@@ -293,7 +289,6 @@ fn linecount_async(
 
     Ok(get_totals(total_lines, total_bytes))
 }
-
 
 fn linecount_verbose(
     dir: Option<PathBuf>,
@@ -519,13 +514,15 @@ fn linecount_verbose_async(
                 *total_bytes.lock().unwrap() += file_bytes;
             }
 
-            if entry.is_visible() && !ignore_vec.contains(&entry.file_name().unwrap().to_string_lossy().to_string()) {
+            if entry.is_visible()
+                && !ignore_vec.contains(&entry.file_name().unwrap().to_string_lossy().to_string())
+            {
                 let filename = entry
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap_or("?")
-                .to_string();
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap_or("?")
+                    .to_string();
 
                 let filename = if filename.len() > FILENAME_RENDER_LIMIT {
                     format!("{}...", &filename[..FILENAME_RENDER_LIMIT])
@@ -550,7 +547,7 @@ fn linecount_verbose_async(
                                 ContentType::CODE => filename.cyan().to_string(),
                                 ContentType::EXECUTABLE => filename.green().to_string(),
                                 ContentType::TEXT => filename.truecolor(217, 50, 122).to_string(),
-                                ContentType::LICENSE => filename.truecolor(0,0,255).to_string(),
+                                ContentType::LICENSE => filename.truecolor(0, 0, 255).to_string(),
                                 ContentType::MAKEFILE => filename.red().to_string(),
                                 _ => filename.to_string(),
                             }
@@ -620,7 +617,7 @@ fn format_byte_count(byte_count: u128) -> String {
 
 fn main() -> std::io::Result<()> {
     let calls = App::new("lc")
-        .version("1.1")
+        .version("1.2")
         .author("Ethan Water")
         .about("Line Counting Program")
         .arg(
@@ -640,15 +637,15 @@ fn main() -> std::io::Result<()> {
 
     if calls.contains_id("test-async") {
         let start_time = Instant::now();
-            let (lines, bytes) = linecount_verbose_async(path, true, true, None)?;
-            let end_time = Instant::now();
-            let f_bytes = format_byte_count(bytes);
-            println!(
-                "[lines]       {lines}\n[bytes]       {f_bytes}\n[time]        {:?}",
-                end_time - start_time
-            );
+        let (lines, bytes) = linecount_verbose_async(path, true, true, None)?;
+        let end_time = Instant::now();
+        let f_bytes = format_byte_count(bytes);
+        println!(
+            "[lines]       {lines}\n[bytes]       {f_bytes}\n[time]        {:?}",
+            end_time - start_time
+        );
     } else if calls.contains_id("verbose") {
-        if calls.contains_id("bytes") && !calls.contains_id("test-async"){
+        if calls.contains_id("bytes") && !calls.contains_id("test-async") {
             let start_time = Instant::now();
             let (lines, bytes) = linecount_verbose(path, true, true, None)?;
             let end_time = Instant::now();
@@ -670,11 +667,7 @@ fn main() -> std::io::Result<()> {
     } else {
         if calls.contains_id("bytes") {
             let start_time = Instant::now();
-            let (lines, bytes) = linecount_async(
-                path,
-                true,
-                false,
-            )?;
+            let (lines, bytes) = linecount_async(path, true, false)?;
             let end_time = Instant::now();
             let f_bytes = format_byte_count(bytes);
             println!(
@@ -683,11 +676,7 @@ fn main() -> std::io::Result<()> {
             );
         } else {
             let start_time = Instant::now();
-            let (lines, _bytes) = linecount_async(
-                path,
-                false,
-                false,
-            )?;
+            let (lines, _bytes) = linecount_async(path, false, false)?;
             let end_time = Instant::now();
             println!(
                 "[lines]       {lines}\n[time]        {:?}",
