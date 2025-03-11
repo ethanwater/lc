@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use clap::{App, Arg, ArgAction};
+use clap::{Arg, ArgAction, Command};
 use colored::Colorize;
 use std::io::Result;
 use std::os::unix::fs::PermissionsExt;
@@ -204,30 +204,30 @@ fn linecount(dir: Option<PathBuf>, byte_toggle: bool, ignore_toggle: bool) -> Re
         let entry = entry?.path();
         let path = entry.as_path();
 
-            let metadata = fs::metadata(path)?.file_type();
-            if metadata.is_file() {
-                let content = String::from_utf8_lossy(&fs::read(&entry)?).into_owned();
-                total_lines += content.lines().count() as u128;
-                if byte_toggle {
-                    total_bytes += content.as_bytes().len() as u128;
-                }
-                continue;
+        let metadata = fs::metadata(path)?.file_type();
+        if metadata.is_file() {
+            let content = String::from_utf8_lossy(&fs::read(&entry)?).into_owned();
+            total_lines += content.lines().count() as u128;
+            if byte_toggle {
+                total_bytes += content.as_bytes().len() as u128;
             }
+            continue;
+        }
 
-            if metadata.is_dir() {
-                let clone_entry = entry.clone();
-                let _linecount_result = linecount(Some(entry).clone(), byte_toggle, ignore_toggle);
-                let linecount = match _linecount_result {
-                    Ok(success) => success,
-                    Err(err) => {
-                        eprintln!("{err}: skipping {:?}", Some(clone_entry));
-                        continue;
-                    }
-                };
-                total_lines += linecount.0;
-                total_bytes += linecount.1;
-                continue;
+        if metadata.is_dir() {
+            let clone_entry = entry.clone();
+            let _linecount_result = linecount(Some(entry).clone(), byte_toggle, ignore_toggle);
+            let linecount = match _linecount_result {
+                Ok(success) => success,
+                Err(err) => {
+                    eprintln!("{err}: skipping {:?}", Some(clone_entry));
+                    continue;
+                }
             };
+            total_lines += linecount.0;
+            total_bytes += linecount.1;
+            continue;
+        };
     }
     Ok((total_lines, total_bytes))
 }
@@ -483,45 +483,45 @@ fn linecount_visual_async(
             *total_lines.lock().unwrap() += file_linecount;
             *total_bytes.lock().unwrap() += file_bytes;
 
-                let filename = entry
-                    .file_name()
-                    .unwrap()
-                    .to_str()
-                    .unwrap_or("?")
-                    .to_string();
+            let filename = entry
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap_or("?")
+                .to_string();
 
-                let filename = if filename.len() > FILENAME_RENDER_LIMIT {
-                    format!("{}...", &filename[..FILENAME_RENDER_LIMIT])
-                } else {
-                    filename
-                };
-                if idx == files.len() - 1 {
-                    connector = "└";
-                }
+            let filename = if filename.len() > FILENAME_RENDER_LIMIT {
+                format!("{}...", &filename[..FILENAME_RENDER_LIMIT])
+            } else {
+                filename
+            };
+            if idx == files.len() - 1 {
+                connector = "└";
+            }
 
-                let formatted_indent = match indent_amount {
-                    Some(0) => format!("{file_ident_from_zero}{connector}{file_indent_from_dir}"),
-                    _ => format!("│{file_ident_from_zero}{connector}{file_indent_from_dir}"),
-                };
+            let formatted_indent = match indent_amount {
+                Some(0) => format!("{file_ident_from_zero}{connector}{file_indent_from_dir}"),
+                _ => format!("│{file_ident_from_zero}{connector}{file_indent_from_dir}"),
+            };
 
-                let formatted_output = format!(
-                    "{:width$} ({}L, {}B)",
-                    {
-                        match path.content_type() {
-                            ContentType::MEDIA => filename.bright_magenta().to_string(),
-                            ContentType::CODE => filename.cyan().to_string(),
-                            ContentType::EXECUTABLE => filename.green().to_string(),
-                            ContentType::TEXT => filename.truecolor(217, 50, 122).to_string(),
-                            ContentType::LICENSE => filename.truecolor(0, 0, 255).to_string(),
-                            ContentType::MAKEFILE => filename.red().to_string(),
-                            _ => filename.to_string(),
-                        }
-                    },
-                    file_linecount,
-                    file_bytes,
-                    width = WIDTH
-                );
-                println!("{formatted_indent}{formatted_output}");
+            let formatted_output = format!(
+                "{:width$} ({}L, {}B)",
+                {
+                    match path.content_type() {
+                        ContentType::MEDIA => filename.bright_magenta().to_string(),
+                        ContentType::CODE => filename.cyan().to_string(),
+                        ContentType::EXECUTABLE => filename.green().to_string(),
+                        ContentType::TEXT => filename.truecolor(217, 50, 122).to_string(),
+                        ContentType::LICENSE => filename.truecolor(0, 0, 255).to_string(),
+                        ContentType::MAKEFILE => filename.red().to_string(),
+                        _ => filename.to_string(),
+                    }
+                },
+                file_linecount,
+                file_bytes,
+                width = WIDTH
+            );
+            println!("{formatted_indent}{formatted_output}");
         } else if filetype.is_dir() {
             let handle = {
                 let total_lines = Arc::clone(&total_lines);
@@ -582,39 +582,38 @@ fn format_and_print_results(lines: u128, bytes: u128, time: Duration) {
 }
 
 fn main() -> std::io::Result<()> {
-    let calls = App::new("lc")
+    let calls = Command::new("lc")
         .version("1.2")
         .author("Ethan Water")
         .about("Line Counting Program")
-        .arg(
+        .args([
             Arg::new("path")
                 .short('p')
                 .long("path")
                 .action(ArgAction::Set)
                 .value_name("PATH")
                 .help("Provides a path to lc"),
-        )
-        .arg(Arg::new("display").short('d').long("display"))
-        .arg(Arg::new("test-async").long("test-async"))
+            Arg::new("display")
+                .short('d')
+                .long("display")
+                .action(ArgAction::SetTrue)
+                .help("Displays the filetree search"),
+        ])
         .get_matches();
 
     let path = calls.get_one::<String>("path").map(PathBuf::from);
 
-    if calls.contains_id("test-async") {
-        let start_time = Instant::now();
-        let (lines, bytes) = linecount_visual_async(path, true, None)?;
-        let end_time = Instant::now();
-        format_and_print_results(lines, bytes, end_time-start_time);
-    } else if calls.contains_id("display") {
+    if *calls.get_one::<bool>("display").unwrap_or(&false) {
         let start_time = Instant::now();
         let (lines, bytes) = linecount_display(path, true, None)?;
         let end_time = Instant::now();
-        format_and_print_results(lines, bytes, end_time-start_time);
+        format_and_print_results(lines, bytes, end_time - start_time);
     } else {
         let start_time = Instant::now();
         let (lines, bytes) = linecount_async(path, false)?;
         let end_time = Instant::now();
-        format_and_print_results(lines, bytes, end_time-start_time);
+        format_and_print_results(lines, bytes, end_time - start_time);
     }
+
     Ok(())
 }

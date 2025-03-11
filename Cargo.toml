@@ -1,8 +1,8 @@
 [package]
 name = "lc"
 version = "0.2.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
-clap = "3.0"
+clap = "4.5.32"
 colored = "3.0.0"

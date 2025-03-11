@@ -6,7 +6,7 @@ def:
 display:
 	@cargo r -- -d 
 
-.PHONY: display-async #displays filetree. multi-threaded (unreliable print order)
-display-async:
-	@cargo r -- --test-async
-
+# .PHONY: display-async #displays filetree. multi-threaded (unreliable print order)
+# display-async:
+# 	@cargo r -- --test-async
+# 
