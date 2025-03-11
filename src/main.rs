@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use clap::{App, Arg, ArgAction};
 use colored::Colorize;
 use std::io::Result;
@@ -191,45 +193,44 @@ fn fetch_gitignore(path: &Path) -> Result<Vec<String>> {
 }
 
 //Non-asynchronous Linecount func, single-threaded. Only here incase I decide to reimplement it.
-//
-// fn linecount(dir: Option<PathBuf>, byte_toggle: bool, ignore_toggle: bool) -> Result<(u128, u128)> {
-//     let (mut total_lines, mut total_bytes) = (0, 0);
-//
-//     let dir_path_binding = dir.unwrap_or(env::current_dir()?);
-//     let dir_path = dir_path_binding.as_path();
-//
-//     let directory_entries = fs::read_dir(dir_path)?;
-//     for entry in directory_entries {
-//         let entry = entry?.path();
-//         let path = entry.as_path();
-//
-//             let metadata = fs::metadata(path)?.file_type();
-//             if metadata.is_file() {
-//                 let content = String::from_utf8_lossy(&fs::read(&entry)?).into_owned();
-//                 total_lines += content.lines().count() as u128;
-//                 if byte_toggle {
-//                     total_bytes += content.as_bytes().len() as u128;
-//                 }
-//                 continue;
-//             }
-//
-//             if metadata.is_dir() {
-//                 let clone_entry = entry.clone();
-//                 let _linecount_result = linecount(Some(entry).clone(), byte_toggle, ignore_toggle);
-//                 let linecount = match _linecount_result {
-//                     Ok(success) => success,
-//                     Err(err) => {
-//                         eprintln!("{err}: skipping {:?}", Some(clone_entry));
-//                         continue;
-//                     }
-//                 };
-//                 total_lines += linecount.0;
-//                 total_bytes += linecount.1;
-//                 continue;
-//             };
-//     }
-//     Ok((total_lines, total_bytes))
-// }
+fn linecount(dir: Option<PathBuf>, byte_toggle: bool, ignore_toggle: bool) -> Result<(u128, u128)> {
+    let (mut total_lines, mut total_bytes) = (0, 0);
+
+    let dir_path_binding = dir.unwrap_or(env::current_dir()?);
+    let dir_path = dir_path_binding.as_path();
+
+    let directory_entries = fs::read_dir(dir_path)?;
+    for entry in directory_entries {
+        let entry = entry?.path();
+        let path = entry.as_path();
+
+            let metadata = fs::metadata(path)?.file_type();
+            if metadata.is_file() {
+                let content = String::from_utf8_lossy(&fs::read(&entry)?).into_owned();
+                total_lines += content.lines().count() as u128;
+                if byte_toggle {
+                    total_bytes += content.as_bytes().len() as u128;
+                }
+                continue;
+            }
+
+            if metadata.is_dir() {
+                let clone_entry = entry.clone();
+                let _linecount_result = linecount(Some(entry).clone(), byte_toggle, ignore_toggle);
+                let linecount = match _linecount_result {
+                    Ok(success) => success,
+                    Err(err) => {
+                        eprintln!("{err}: skipping {:?}", Some(clone_entry));
+                        continue;
+                    }
+                };
+                total_lines += linecount.0;
+                total_bytes += linecount.1;
+                continue;
+            };
+    }
+    Ok((total_lines, total_bytes))
+}
 
 fn linecount_async(dir: Option<PathBuf>, ignore_toggle: bool) -> Result<(u128, u128)> {
     let total_lines = Arc::new(Mutex::new(0));
@@ -419,7 +420,7 @@ fn linecount_visual_async(
     let dir_path_binding = dir.unwrap_or(env::current_dir()?);
     let dir_path = dir_path_binding.as_path();
     let mut file_indent_from_zero_size = indent_amount.unwrap_or_default();
-    let ignore_vec = fetch_gitignore(&dir_path)?;
+    //let ignore_vec = fetch_gitignore(&dir_path)?;
     let mut handles = Vec::new();
 
     if indent_amount.is_none() {
@@ -482,9 +483,6 @@ fn linecount_visual_async(
             *total_lines.lock().unwrap() += file_linecount;
             *total_bytes.lock().unwrap() += file_bytes;
 
-            if entry.is_visible()
-                && !ignore_vec.contains(&entry.file_name().unwrap().to_string_lossy().to_string())
-            {
                 let filename = entry
                     .file_name()
                     .unwrap()
@@ -524,7 +522,6 @@ fn linecount_visual_async(
                     width = WIDTH
                 );
                 println!("{formatted_indent}{formatted_output}");
-            }
         } else if filetype.is_dir() {
             let handle = {
                 let total_lines = Arc::clone(&total_lines);
