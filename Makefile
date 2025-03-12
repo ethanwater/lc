@@ -6,6 +6,9 @@ def:
 display:
 	@cargo r -- -d 
 
+flame:
+	@cargo flamegraph --root -b lc
+	open -a Safari flamegraph.svg
 # .PHONY: display-async #displays filetree. multi-threaded (unreliable print order)
 # display-async:
 # 	@cargo r -- --test-async

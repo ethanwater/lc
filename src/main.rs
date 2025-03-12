@@ -2,6 +2,7 @@
 
 use clap::{Arg, ArgAction, Command};
 use colored::Colorize;
+use std::collections::HashSet;
 use std::io::Result;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -9,7 +10,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use std::{env, fs};
-use std::collections::HashSet;
 
 const WIDTH: usize = 20;
 const FILENAME_RENDER_LIMIT: usize = 60;
@@ -30,7 +30,7 @@ lazy_static::lazy_static! {
         "js", "jsx", "mjs", "cjs", "ts", "tsx", "py", "pyc", "pyd", "pyo", "rb", "erb",
         "php", "phar", "go", "rs", "rlib", "swift", "dart", "scala", "lua", "r", "pl", "pm", "sql",
         "html", "htm", "xhtml", "xml", "css", "scss", "sass", "json", "yaml", "yml", "toml",
-        "env", "ini", "cfg", "md", "rst", "cmake", "mk", "dockerfile", "dockerignore", 
+        "env", "ini", "cfg", "md", "rst", "cmake", "mk", "dockerfile", "dockerignore",
         "gitignore", "gitattributes"
     ].iter().copied().collect();
 
@@ -63,7 +63,9 @@ impl Content for Path {
             if MEDIA_EXTENSIONS.contains(ext) {
                 return ContentType::MEDIA;
             }
-            if EXECUTABLE_EXTENSIONS.contains(ext) || (self.is_unix_executable().unwrap_or(false) && !TEXT_EXTENSIONS.contains(ext)) {
+            if EXECUTABLE_EXTENSIONS.contains(ext)
+                || (self.is_unix_executable().unwrap_or(false) && !TEXT_EXTENSIONS.contains(ext))
+            {
                 return ContentType::EXECUTABLE;
             }
             if TEXT_EXTENSIONS.contains(ext) {
@@ -265,7 +267,7 @@ fn linecount_display(
             if idx == files.len() - 1 {
                 connector = "└";
             }
-            
+
             let formatted_indent: String = match indent_amount {
                 Some(0) => format!("{file_ident_from_zero}{connector}{file_indent_from_dir}"),
                 _ => format!("|{file_ident_from_zero}{connector}{file_indent_from_dir}"),
@@ -425,10 +427,8 @@ fn linecount_display_async(
                 let path = PathBuf::from(path);
 
                 thread::spawn(move || {
-                    let recursive_lc = linecount_display_async(
-                        Some(path),
-                        Some(indent_amount.unwrap() + 2),
-                    );
+                    let recursive_lc =
+                        linecount_display_async(Some(path), Some(indent_amount.unwrap() + 2));
 
                     if let Ok((lines, bytes)) = recursive_lc {
                         *total_lines.lock().unwrap() += lines;
@@ -536,12 +536,18 @@ mod tests {
             iteration += 1;
         }
 
-        let avg_bytes = t_bytes/TEST_ITERATIONS;
-        let avg_execution_time = total_execution_time/TEST_ITERATIONS as f64;
+        let avg_bytes = t_bytes / TEST_ITERATIONS;
+        let avg_execution_time = total_execution_time / TEST_ITERATIONS as f64;
         let mbs = avg_bytes as f64 / (avg_execution_time * 1_048_576.);
 
         println!("Average MB/S:                         {:.7}mb/s", mbs);
-        println!("Average Execution Time Per Iteration: {}", avg_execution_time);
-        println!("Total Execution Time:                 {}", total_execution_time);
+        println!(
+            "Average Execution Time Per Iteration: {}",
+            avg_execution_time
+        );
+        println!(
+            "Total Execution Time:                 {}",
+            total_execution_time
+        );
     }
 }
